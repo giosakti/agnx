@@ -6,12 +6,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -lc 'cd \"$CLAUDE_PROJECT_DIR\" && files=$(git ls-files \"*.go\" 2>/dev/null || true); if [ -n \"$files\" ]; then gofmt -w $files; fi'",
+            "command": "bash -lc 'cd \"$CLAUDE_PROJECT_DIR\" && files=$(git ls-files \"*.go\" 2>/dev/null || true); if [ -n \"$files\" ]; then gofmt -w $files; fi'",
             "timeout": 20
           },
           {
             "type": "command",
-            "command": "sh -lc 'cd \"$CLAUDE_PROJECT_DIR\" && if [ \"${PLUTO_CLAUDE_GO_TEST:-0}\" = \"1\" ] && [ -f go.mod ]; then go test ./...; fi'",
+            "command": "bash -lc 'cd \"$CLAUDE_PROJECT_DIR\" && if [ \"${PLUTO_CLAUDE_GO_TEST:-0}\" = \"1\" ] && [ -f go.mod ]; then go test ./...; fi'",
             "timeout": 45
           }
         ]
