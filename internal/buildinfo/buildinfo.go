@@ -6,7 +6,7 @@ import "runtime"
 //
 // Example:
 //
-//	go build -ldflags "-X github.com/giosakti/pluto/internal/buildinfo.Version=v0.1.0 -X github.com/giosakti/pluto/internal/buildinfo.Commit=$(git rev-parse --short HEAD) -X github.com/giosakti/pluto/internal/buildinfo.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" ./cmd/pluto
+//	go build -ldflags "-X github.com/giosakti/agnx/internal/buildinfo.Version=v0.1.0 -X github.com/giosakti/agnx/internal/buildinfo.Commit=$(git rev-parse --short HEAD) -X github.com/giosakti/agnx/internal/buildinfo.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" ./cmd/agnx
 var (
 	Version = "dev"
 	Commit  = "none"

@@ -4,7 +4,7 @@
 name: task-extraction
 description: Extract actionable tasks from a message or conversation
 version: 1.0.0
-author: Pluto
+author: Agnx
 allowed_tools:
   - calculator
 triggers:

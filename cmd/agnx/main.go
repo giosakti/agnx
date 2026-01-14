@@ -9,9 +9,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/giosakti/pluto/internal/api"
-	"github.com/giosakti/pluto/internal/buildinfo"
-	"github.com/giosakti/pluto/internal/config"
+	"github.com/giosakti/agnx/internal/api"
+	"github.com/giosakti/agnx/internal/buildinfo"
+	"github.com/giosakti/agnx/internal/config"
 )
 
 func main() {
@@ -35,7 +35,7 @@ func run() error {
 
 	if showVersion {
 		fmt.Printf(
-			"pluto %s (commit %s) built %s (go %s)\n",
+			"agnx %s (commit %s) built %s (go %s)\n",
 			buildinfo.Version,
 			buildinfo.Commit,
 			buildinfo.Date,

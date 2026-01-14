@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/giosakti/pluto/internal/config"
+	"github.com/giosakti/agnx/internal/config"
 )
 
 // Server is the HTTP API server.

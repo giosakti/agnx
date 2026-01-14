@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/giosakti/pluto/internal/config"
+	"github.com/giosakti/agnx/internal/config"
 )
 
 func newTestServer(t *testing.T) *Server {

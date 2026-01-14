@@ -58,7 +58,7 @@ func applyDefaults(cfg *Config) {
 
 	// Data directory default.
 	if cfg.DataDir == "" {
-		cfg.DataDir = "./.pluto"
+		cfg.DataDir = "./.agnx"
 	}
 
 	// Derived defaults (depend on other config values).

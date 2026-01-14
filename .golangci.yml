@@ -21,4 +21,4 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - github.com/giosakti/pluto
+        - github.com/giosakti/agnx

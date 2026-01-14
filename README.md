@@ -1,11 +1,11 @@
-# Pluto
+# Agnx
 
-> **Pluto is the "nginx for AI agents"** — a minimal, fast, self-hostable runtime that runs agents defined in a **transparent, portable format**, exposed through a standard API.
+> **Agnx is the "nginx for AI agents"** — a minimal, fast, self-hostable runtime that runs agents defined in a **transparent, portable format**, exposed through a standard API.
 
-Pluto treats agents as durable artifacts: files you own that should outlast the runtime.
+Agnx treats agents as durable artifacts: files you own that should outlast the runtime.
 - **Transparent agent format** (human-readable, inspectable, versionable)
 - **Stateless by default** (no hidden server-side state)
-- **File-based state** when present (specs, memories, logs, config) — if Pluto disappears, take these and host elsewhere
+- **File-based state** when present (specs, memories, logs, config) — if Agnx disappears, take these and host elsewhere
 
 ## Documentation
 
@@ -14,7 +14,7 @@ Pluto treats agents as durable artifacts: files you own that should outlast the 
 - **[Architecture](./docs/plans/202601111101.architecture.md)**
 - **[API Reference](./docs/plans/202601111102.api-reference.md)**
 - **[Deployment](./docs/plans/202601111103.deployment.md)**
-- **[Pluto Agent Format (PAF)](./docs/plans/202601111200.pluto-agent-format.md)**
+- **[Agnx Agent Format (AAF)](./docs/plans/202601111200.agnx-agent-format.md)**
 - **[Example skill](./docs/examples/skills/task-extraction/)**
 
 ## Tech Stack
@@ -27,10 +27,10 @@ Pluto treats agents as durable artifacts: files you own that should outlast the 
 
 ## Workspace Layout (file-based mode)
 
-Pluto’s default workspace layout is:
+Agnx's default workspace layout is:
 
 ```
-./.pluto/
+./.agnx/
 ├── agents/<agent-name>/
 │   ├── agent.yaml
 │   ├── SYSTEM_PROMPT.md

@@ -1,4 +1,4 @@
-module github.com/giosakti/pluto
+module github.com/giosakti/agnx
 
 go 1.25
 

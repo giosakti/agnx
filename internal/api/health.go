@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/giosakti/pluto/internal/buildinfo"
+	"github.com/giosakti/agnx/internal/buildinfo"
 )
 
 // VersionResponse is the response for GET /version.

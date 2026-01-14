@@ -24,10 +24,10 @@ func TestLoad_EmptyPath(t *testing.T) {
 	if cfg.Server.WriteTimeout != 30 {
 		t.Errorf("Server.WriteTimeout = %d, want 30", cfg.Server.WriteTimeout)
 	}
-	if cfg.DataDir != "./.pluto" {
-		t.Errorf("DataDir = %q, want %q", cfg.DataDir, "./.pluto")
+	if cfg.DataDir != "./.agnx" {
+		t.Errorf("DataDir = %q, want %q", cfg.DataDir, "./.agnx")
 	}
-	wantAgentsDir := filepath.Join("./.pluto", "agents")
+	wantAgentsDir := filepath.Join("./.agnx", "agents")
 	if cfg.AgentsDir != wantAgentsDir {
 		t.Errorf("AgentsDir = %q, want %q", cfg.AgentsDir, wantAgentsDir)
 	}
@@ -90,8 +90,8 @@ server:
 	if cfg.Server.ReadTimeout != 30 {
 		t.Errorf("Server.ReadTimeout = %d, want 30", cfg.Server.ReadTimeout)
 	}
-	if cfg.DataDir != "./.pluto" {
-		t.Errorf("DataDir = %q, want %q", cfg.DataDir, "./.pluto")
+	if cfg.DataDir != "./.agnx" {
+		t.Errorf("DataDir = %q, want %q", cfg.DataDir, "./.agnx")
 	}
 }
 
