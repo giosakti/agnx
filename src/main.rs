@@ -3,9 +3,9 @@ mod config;
 mod handlers;
 mod response;
 
+use axum::Router;
 use axum::http::StatusCode;
 use axum::routing::get;
-use axum::Router;
 use clap::{Parser, Subcommand};
 use config::Config;
 use std::net::{IpAddr, SocketAddr};
@@ -54,9 +54,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Serve { config, port, host } => {
-            run_server(config, port, host).await
-        }
+        Commands::Serve { config, port, host } => run_server(config, port, host).await,
     }
 }
 
