@@ -44,6 +44,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let app = Router::new()
+        .route("/livez", get(handlers::livez))
+        .route("/readyz", get(handlers::readyz))
         .route("/version", get(handlers::version))
         .route("/example-bad-request", get(handlers::example_bad_request))
         .route("/example-not-found", get(handlers::example_not_found))
