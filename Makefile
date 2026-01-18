@@ -1,4 +1,4 @@
-.PHONY: build test lint coverage clean run help
+.PHONY: build test test-nocapture lint coverage clean run help
 
 # Build variables
 BINARY_NAME := agnx
@@ -21,6 +21,10 @@ build:
 ## test: Run tests
 test:
 	cargo test
+
+## test-nocapture: Run tests with output (don't capture stdout/stderr)
+test-nocapture:
+	cargo test -- --nocapture
 
 ## lint: Run linter
 lint:
