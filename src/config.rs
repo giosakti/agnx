@@ -15,6 +15,8 @@ pub struct ServerConfig {
     pub host: String,
     #[serde(default = "default_port")]
     pub port: u16,
+    #[serde(default = "default_timeout")]
+    pub request_timeout: u64,
 }
 
 fn default_host() -> String {
@@ -25,6 +27,9 @@ fn default_port() -> u16 {
     8080
 }
 
+fn default_timeout() -> u64 {
+    30
+}
 
 impl Default for ServerConfig {
     fn default() -> Self {

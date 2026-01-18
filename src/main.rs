@@ -8,7 +8,10 @@ use axum::Router;
 use clap::Parser;
 use config::Config;
 use std::net::{IpAddr, SocketAddr};
+use std::time::Duration;
 use tokio::signal;
+use axum::http::StatusCode;
+use tower_http::timeout::TimeoutLayer;
 
 /// Agnx - A minimal and fast self-hosted runtime for durable and portable AI agents
 #[derive(Parser, Debug)]
@@ -56,7 +59,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .route(
             "/example-internal-error",
             get(handlers::example_internal_error),
-        );
+        )
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(config.server.request_timeout),
+        ));
 
     let ip: IpAddr = config.server.host.parse()?;
     let addr = SocketAddr::new(ip, config.server.port);
