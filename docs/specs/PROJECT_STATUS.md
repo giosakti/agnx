@@ -42,6 +42,10 @@ Key specs and design docs:
 | Discovery | A2A Agent Card | Standards-compliant agent discovery |
 | Tool results | Content + Details separation | LLM sees minimal text/JSON; clients get structured metadata |
 | Security | Sandboxed by default (Linux); trust mode available | Sandbox for isolation; trust mode fallback for trusted setups |
+| Agent routing | Routing table (first match wins) | Flexible, extensible; user controls specificity via ordering |
+| Session compaction | Auto-compact after N events; archive old events | Prevents unbounded storage growth |
+| Tool approval | Optional approval workflow for dangerous tools | Safety without sacrificing autonomy |
+| Observability | Structured logging (JSON); metrics + tracing planned | Debug + monitor from day one |
 
 ## Roadmap / Milestones
 
@@ -116,6 +120,10 @@ Key specs and design docs:
 
 ## Recent Accomplishments
 
+- Added agent routing table (first match wins; extensible match fields)
+- Added session compaction policy (auto-compact, archive old events)
+- Added tool approval workflow (optional, for dangerous operations)
+- Added observability section (structured logging, metrics, tracing)
 - Refined strategic direction: session persistence + terminal attachment
 - Decided on storage formats: JSONL for events, YAML for state, Markdown for prose
 - Decided on sandbox approach: bubblewrap (lightweight), Docker/trust-mode as fallbacks
@@ -133,6 +141,23 @@ Key specs and design docs:
 - None currently
 
 ## Session Notes
+
+**2026-01-24 — Additional analysis**
+
+**Patterns to Adopt:**
+- **Agent routing table**: First match wins; flat match object; extensible fields; user controls specificity via ordering
+- **Hot reload with validation**: File watcher + schema validation + per-component restart (no full restart)
+- **Exec approval workflow**: Interactive approval for dangerous tools (bash, file writes)
+- **Tool streaming**: Chunk tool results for real-time feedback via SSE
+- **Structured logging**: JSONL with subsystem hierarchy; add from day one
+
+**Patterns to Avoid:**
+- **Monolithic process**: All channels/agents in one process; crash affects everything → Agnx uses subprocess plugins
+- **File lock contention**: Synchronous file locks block event loop → use non-blocking `flock` or DB advisory locks
+- **Unbounded session growth**: JSONL grows forever → add compaction policy with pruning
+- **Config complexity**: Large schema, scattered docs → start minimal, fail fast with clear errors
+- **No observability**: No metrics/tracing/alerting → add OpenTelemetry from day one
+- **Type erosion**: `Record<string, any>` for flexibility → Rust's type system prevents this
 
 **2026-01-24 — Gateway & Session Refinement**
 
