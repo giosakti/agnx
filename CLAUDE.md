@@ -5,6 +5,7 @@
 ## ⚠️ CRITICAL: Task Tracking Rules
 
 This project uses **bd (beads)** for issue tracking.
+
 Run `bd prime` for workflow context, or install hooks (`bd hooks install`) for auto-injection.
 
 **Quick reference:**
@@ -17,16 +18,32 @@ For full workflow details: `bd prime`
 
 ## Project Overview
 
-> **Agnx is the "nginx for AI agents"** — a minimal, fast, self-hostable runtime that runs agents defined in a **transparent, portable format**, exposed through a standard API.
+> **Agnx** is a durable, portable runtime for AI agents.
 
-Agnx treats agents as durable artifacts: files you own that should outlast the runtime.
-- **Transparent agent format** (human-readable, inspectable, versionable)
-- **Stateless by default** (no hidden server-side state)
-- **File-based state** when present (specs, memories, logs, config) — if Agnx disappears, take these and host elsewhere
+- **Sessions that survive** — crash, restart, reconnect from any terminal: agnx is durable by design
+- **Transparent state** — agent specs, memories, and sessions are human-readable files you can inspect, version, and export
+- **Sandboxed by default** — bubblewrap on Linux; Docker or trust mode on other platforms
+- **Pluggable everything** — file-based by default; bring your own storage or messaging backends
+- **Edge-ready** — single-binary core (~10MB), gateway plugins are optional separate binaries
+
+Core protocols built-in (CLI, HTTP, SSE). Platform integrations via plugins.
+
+Self-host it directly, or use it as the foundation for agent-powered products.
+
+### Key Concepts
+
+| Concept | Description |
+|---------|-------------|
+| **Session** | Durable conversation context; survives crashes/disconnects; attach/detach like tmux |
+| **on_disconnect** | `continue` (agent keeps working) or `pause` (waits for reconnect) |
+| **Core gateways** | CLI/TUI, HTTP REST, SSE — built into Agnx |
+| **Platform gateways** | Telegram, Discord, Slack — subprocess plugins via Gateway Protocol |
+| **Sandbox** | bubblewrap (Linux), Docker — configurable isolation |
+| **AAF** | Agnx Agent Format — YAML + Markdown agent definitions |
 
 ## Strategic Documents
 
-- **[Readme of this project](README.md)**
+- **[README](README.md)**
 - **[Project status / roadmap](./docs/specs/PROJECT_STATUS.md)**
 - **[Project Charter](./docs/specs/202601111100.project-charter.md)**
 - **[Architecture](./docs/specs/202601111101.architecture.md)**
@@ -37,9 +54,18 @@ Agnx treats agents as durable artifacts: files you own that should outlast the r
 
 ## Tech Stack
 
-- Rust 2024 Edition (single binary, <5MB, no runtime dependencies)
-- HTTP API: Axum + SSE
-- Config/spec: YAML + Markdown
-- Tool ecosystem: MCP
+- Rust 2024 Edition
+- HTTP: Axum
+- Streaming: SSE
+- Config/spec: YAML (structured) + Markdown (prose)
+- Tool ecosystem: built-in, CLI tools, MCP
 - Discovery: A2A Agent Card
-- Targets: x86_64, ARM64, ARM32 (edge/embedded-capable)
+- Sandbox: bubblewrap, Docker
+
+## Code Conventions
+
+- **Error handling:** Use `anyhow` for application errors, `thiserror` for library errors
+- **Async:** Tokio runtime, async traits via `async_trait`
+- **Config:** `serde` for YAML/JSON, environment variables via `${VAR}` syntax
+- **Logging:** `tracing` crate with structured spans
+- **Tests:** Unit tests inline, integration tests in `tests/`

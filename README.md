@@ -4,19 +4,23 @@
 [![Rust](https://img.shields.io/badge/rust-1.85+-orange?logo=rust)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> **Agnx is the "nginx for AI agents"** — a minimal, fast, self-hostable runtime that runs agents defined in a **transparent, portable format**, exposed through a standard API.
+> **Agnx** is a durable, portable runtime for AI agents.
 
-Agnx treats agents as durable artifacts: files you own that should outlast the runtime.
+- **Sessions that survive** — crash, restart, reconnect from any terminal: agnx is durable by design
+- **Transparent state** — agent specs, memories, and sessions are human-readable files you can inspect, version, and export
+- **Sandboxed by default** — bubblewrap on Linux; Docker or trust mode on other platforms
+- **Pluggable everything** — file-based by default; bring your own storage or messaging backends
+- **Edge-ready** — single-binary core (~10MB), gateway plugins are optional separate binaries
 
-- **Transparent agent format** (human-readable, inspectable, versionable)
-- **Stateless by default** (no hidden server-side state)
-- **File-based state** when present (specs, memories, logs, config) — if Agnx disappears, take these and host elsewhere
-- **Edge/embedded-friendly by design** (small binary, low memory, minimal dependencies)
+Core protocols built-in (CLI, HTTP, SSE). Platform integrations via plugins.
+
+Self-host it directly, or use it as the foundation for agent-powered products.
 
 ## Why Agnx?
 
 | Problem | Agnx Solution |
 |---------|---------------|
+| Sessions lost on crash or disconnect | **Durable sessions** — attach/detach like tmux, resume where you left off |
 | Agent definitions locked in proprietary formats | **Portable YAML + Markdown** — version control, inspect, migrate anywhere |
 | Hidden runtime state you can't access | **File-based by default** — sessions, memory, artifacts are just files |
 | Heavy frameworks with complex setup | **Single binary, <5MB** — starts in milliseconds |
@@ -27,14 +31,9 @@ Agnx treats agents as durable artifacts: files you own that should outlast the r
 ### From Source
 
 ```bash
-# Clone the repository
 git clone https://github.com/giosakti/agnx.git
 cd agnx
-
-# Build
 make build
-
-# Verify
 ./target/release/agnx --version
 ```
 
@@ -61,6 +60,8 @@ spec:
     provider: openrouter
     name: anthropic/claude-sonnet-4
   system_prompt: ./SYSTEM_PROMPT.md
+  session:
+    on_disconnect: pause
 EOF
 
 cat > .agnx/agents/my-assistant/SYSTEM_PROMPT.md << 'EOF'
@@ -78,14 +79,26 @@ agnx serve --port 8080
 ### 3. Chat with your agent
 
 ```bash
+# Interactive CLI
+agnx chat --agent my-assistant
+
+# Or via HTTP
 curl -X POST http://localhost:8080/api/v1/agents/my-assistant/chat \
   -H "Content-Type: application/json" \
-  -d '{"message": "Hello, how are you?"}'
+  -d '{"message": "Hello!"}'
+```
+
+### 4. Attach to a session later
+
+```bash
+# List sessions
+agnx sessions
+
+# Attach to existing session
+agnx attach session_abc123
 ```
 
 ## Workspace Layout
-
-Agnx's default workspace layout (file-based mode):
 
 ```
 ./.agnx/
@@ -93,10 +106,13 @@ Agnx's default workspace layout (file-based mode):
 │   ├── agent.yaml           # Agent definition (AAF)
 │   ├── SYSTEM_PROMPT.md     # Agent personality
 │   ├── INSTRUCTIONS.md      # Behavioral rules
-│   └── skills/              # Local skill discovery
-├── memory/                  # Durable memory (files)
-├── sessions/                # Chat history (files)
-└── artifacts/               # Generated outputs (files)
+│   └── skills/              # Local skills
+├── memory/                  # Durable memory (Markdown)
+├── sessions/
+│   └── <session_id>/
+│       ├── events.jsonl     # Append-only event log
+│       └── state.yaml       # Snapshot for fast resume
+└── artifacts/               # Generated outputs
 ```
 
 ## Documentation
@@ -104,6 +120,7 @@ Agnx's default workspace layout (file-based mode):
 | Document | Description |
 |----------|-------------|
 | [Project Status](./docs/specs/PROJECT_STATUS.md) | Roadmap and current focus |
+| [Project Charter](./docs/specs/202601111100.project-charter.md) | Vision, goals, and principles |
 | [Architecture](./docs/specs/202601111101.architecture.md) | System design and components |
 | [API Reference](./docs/specs/202601111102.api-reference.md) | HTTP API and CLI commands |
 | [Deployment](./docs/specs/202601111103.deployment.md) | Deployment modes and configuration |
@@ -112,12 +129,13 @@ Agnx's default workspace layout (file-based mode):
 
 ## Tech Stack
 
-- **Language:** Rust 2024 Edition (single binary, <5MB, no runtime dependencies)
-- **HTTP:** Axum + SSE for streaming
-- **Config:** YAML (structured) + Markdown (unstructured)
-- **Tools:** MCP (Model Context Protocol)
-- **Discovery:** A2A Agent Card
-- **Targets:** x86_64, ARM64, ARM32 (edge/embedded-capable)
+- Rust 2024 Edition
+- HTTP: Axum
+- Streaming: SSE
+- Config/spec: YAML (structured) + Markdown (prose)
+- Tool ecosystem: built-in, CLI tools, MCP
+- Discovery: A2A Agent Card
+- Sandbox: bubblewrap, Docker
 
 ## Contributing
 

@@ -3,7 +3,7 @@
 > **Purpose:** Living status + session context. The stable vision and principles live in the [Project Charter](./202601111100.project-charter.md).
 
 ## Last Updated
-2026-01-11
+2026-01-24
 
 ## Strategic Direction
 
@@ -19,21 +19,29 @@ Key specs and design docs:
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Architecture | Stateless (nginx-like) | Simple, scalable, crash-resilient |
-| Deployment philosophy | Stateless core, pluggable state | Simple mode (files) for self-hosted, complex mode (external) for SaaS |
+| Architecture | Crash-resilient core, durable sessions | Immediate persistence ensures recovery; sessions survive disconnects |
+| Deployment philosophy | Persistent-first, pluggable backends | Simple mode (files) for self-hosted, complex mode (external) for SaaS |
 | Storage default | File-based (`./.agnx/` files) | Zero dependencies, git-friendly, human-readable |
 | Storage pluggable | PostgreSQL, Redis, S3 | Upgrade path for production deployments |
-| Gateway | Embedded for simple, external for SaaS | Power users get single binary; SaaS apps own routing |
-| Provider architecture | Hybrid (built-in + clean interface) | Ship common providers, keep a clean interface for extensibility |
+| Storage formats | JSONL (events), YAML (state), Markdown (prose) | JSONL for high-frequency append-only writes; YAML for structured snapshots; Markdown for human content |
+| Session persistence | Append-only event log + periodic YAML snapshot | Fast writes (append), fast reads (snapshot), human-readable, survives disconnects |
+| Session disconnect | Configurable: `continue` or `pause` | `continue` for async workflows (agent keeps working); `pause` for interactive chat |
+| Sandbox default | bubblewrap (Linux); Docker or trust mode (macOS/Windows) | Lightweight on Linux; heavier isolation or trust mode elsewhere |
+| Sandbox pluggable | Docker, None (trust mode) | Heavier isolation when needed |
+| Terminal attachment | `agnx attach` for remote sessions | "SSH to your agent" — connect/disconnect/resume, session survives |
+| Agent orchestration | Agnx supervises external agents (Claude Code, OpenCode) | Supervisor agent delegates to specialized workers |
+| Worker agents | Claude Code headless, OpenCode, custom | Leverage existing tools via their CLI/SDK interfaces |
+| Orchestration pattern | Supervisor reviews worker output | LLM-based review loop; approve/reject/retry before committing |
+| Core gateways | CLI/TUI, HTTP REST, SSE (built-in) | Protocols that ship with Agnx; SSE for streaming (simpler than WebSocket) |
+| Platform gateways | Subprocess plugins (Telegram, Discord, Slack) | JSON-over-stdio protocol; crash independently; any language |
 | Runtime pattern | Simple event loop | Minimal complexity; add features only when needed |
 | Services layer | Session, Memory, Artifact | Clean separation of concerns, pluggable backends |
-| Multi-tenant | Yes, thousands per instance | Lazy loading + LRU cache |
+| Multi-tenant | Server: thousands; Edge: optimized for few | Lazy loading + LRU cache; edge prioritizes efficiency |
 | Agent deployment | Admin API + file-based | Supports both GitOps and dynamic |
 | Agent definition | YAML + Markdown (AAF; no code) | Portability, inspectable, git-friendly |
 | Discovery | A2A Agent Card | Standards-compliant agent discovery |
 | Tool results | Content + Details separation | LLM sees minimal text/JSON; clients get structured metadata |
-| Transport | HTTP + SSE default, WebSocket optional | SSE simpler; WebSocket for real-time needs |
-| Security | Default permissive, optional sandbox | Low-friction for trusted setups; sandbox for multi-tenant |
+| Security | Sandboxed by default (Linux); trust mode available | Sandbox for isolation; trust mode fallback for trusted setups |
 
 ## Roadmap / Milestones
 
@@ -41,25 +49,48 @@ Key specs and design docs:
 - [ ] Agent spec loader (AAF: YAML + Markdown)
 - [ ] Support for LLM provider (OpenRouter)
 - [ ] Basic agent executor (prompt → response)
-- [ ] HTTP API (minimal endpoints)
+- [ ] Core gateways: CLI, HTTP REST
 - [ ] CLI: `agnx serve`, `agnx chat`
 - [ ] Docker image
 
-### v0.2.0 — Standards & Providers
-- [ ] Agent Protocol API (`/api/v1/agent/tasks`)
-- [ ] Multiple LLM providers (OpenAI, Anthropic, Ollama)
-- [ ] Services interfaces (Session/Memory/Artifacts)
-- [ ] CLI: `agnx run`, `agnx validate`
+### v0.2.0 — Sessions & Durability
+- [ ] Session persistence (JSONL events + YAML snapshots)
+- [ ] Session resume on reconnect
+- [ ] Session disconnect behavior (`continue` / `pause`)
+- [ ] CLI: `agnx attach` (connect to running/paused session)
+- [ ] Core gateways: SSE streaming
 
-### v0.3.0 — Tools & Memory
+### v0.3.0 — Sandbox
+- [ ] Sandbox interface + auto-selection
+- [ ] bubblewrap backend (Linux)
+- [ ] Docker backend (cross-platform fallback)
+- [ ] Trust mode (no isolation)
+
+### v0.4.0 — Tools & Memory
 - [ ] MCP tool integration
 - [ ] CLI tool support (lightweight alternative to MCP)
 - [ ] File-based memory backend
 - [ ] Agent export/import
 - [ ] CLI: `agnx export`, `agnx import`
 
-### v0.4.0 — Production Ready
-- [ ] External storage backends (PostgreSQL, Redis, S3)
+### v0.5.0 — Gateway Plugins
+- [ ] Gateway plugin protocol (JSON over stdio)
+- [ ] First-party plugin: agnx-gateway-telegram
+- [ ] Plugin configuration in agnx.yaml
+
+### v0.6.0 — External Backends
+- [ ] Services: PostgreSQL backend
+- [ ] Services: Redis backend
+- [ ] Services: S3 backend
+
+### v0.7.0 — Agent Orchestration
+- [ ] Built-in tool: `claude_code_exec` (invoke Claude Code headless)
+- [ ] Built-in tool: `opencode_exec` (invoke OpenCode headless)
+- [ ] Supervisor agent pattern (review worker output before committing)
+- [ ] Async notifications (Slack, email, webhook)
+- [ ] Worker session management (track/resume worker sessions)
+
+### v0.8.0 — Production Ready
 - [ ] Comprehensive test suite
 - [ ] OpenAPI documentation
 - [ ] Performance benchmarks
@@ -85,16 +116,53 @@ Key specs and design docs:
 
 ## Recent Accomplishments
 
-- (Add session notes here)
+- Refined strategic direction: session persistence + terminal attachment
+- Decided on storage formats: JSONL for events, YAML for state, Markdown for prose
+- Decided on sandbox approach: bubblewrap (lightweight), Docker/trust-mode as fallbacks
+- Finalized gateway architecture: core protocols (CLI, HTTP, SSE) built-in; platform integrations via subprocess plugins
+- Decided on session disconnect behavior: configurable `continue` (async) vs `pause` (interactive)
+- Removed WebSocket in favor of SSE-only streaming (simpler, sufficient for agent use case)
 
 ## Next Action
 
-- (What’s the next concrete task?)
+- Complete basic agent executor (prompt → response)
+- Wire LLM client to chat endpoint
 
 ## Blockers / Known Issues / Decisions Needed
 
-- (List blockers, known issues and open decisions)
+- None currently
 
 ## Session Notes
 
-- (List volatile context for the next session - update as needed)
+**2026-01-24 — Gateway & Session Refinement**
+
+Finalized gateway architecture:
+- **Core gateways** (built-in): CLI/TUI, HTTP REST, SSE — these are protocols, not platforms
+- **Platform gateways** (plugins): Telegram, Discord, Slack run as subprocess plugins via Gateway Protocol (JSON over stdio)
+- Removed WebSocket — SSE is sufficient for LLM streaming, simpler to implement and proxy
+
+Session disconnect behavior:
+- `on_disconnect: continue` — agent keeps executing, buffers output (for async/supervisor workflows)
+- `on_disconnect: pause` — agent pauses at next safe point (for interactive chat)
+- Configurable per-agent in `agent.yaml`, with global defaults in `agnx.yaml`
+
+This enables the key use case: "fire and forget" tasks where user disconnects and agent continues working, notifies when done.
+
+**2025-01-23 — Strategic Direction Update**
+
+Killer feature direction: **Sessions that survive crashes, restarts, and disconnects**
+- Terminal attachment (`agnx attach`) — SSH-like connection to agent sessions
+- Session persistence — conversation + sandbox state survives disconnects
+- Pluggable sandboxes — bubblewrap (light) → Docker → cloud
+
+**Agent Orchestration Direction**
+
+Rather than competing with Claude Code, OpenCode, Aider, etc., Agnx will **orchestrate** them:
+- Supervisor agent runs on Agnx (always-on, async)
+- Delegates coding tasks to Claude Code (headless mode: `claude -p "task" --output-format json`)
+- Reviews worker output before approving (LLM-based review loop)
+- User doesn't need to be at terminal — supervisor handles it
+
+Key insight: Claude Code supports headless mode with `--output-format json` and `--resume` for session continuity. Agnx can invoke and supervise it programmatically.
+
+This positions Agnx as **infrastructure that makes any agent better** — not another agent competing for users.
