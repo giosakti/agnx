@@ -51,11 +51,10 @@ Key specs and design docs:
 
 ### v0.1.0 — Foundation
 - [ ] Agent spec loader (AAF: YAML + Markdown)
-- [ ] Support for LLM provider (OpenRouter)
+- [ ] Single LLM provider (OpenRouter)
 - [ ] Basic agent executor (prompt → response)
 - [ ] Core gateways: CLI, HTTP REST
 - [ ] CLI: `agnx serve`, `agnx chat`
-- [ ] Docker image
 
 ### v0.2.0 — Sessions & Durability
 - [ ] Session persistence (JSONL events + YAML snapshots)
@@ -71,8 +70,8 @@ Key specs and design docs:
 - [ ] Trust mode (no isolation)
 
 ### v0.4.0 — Tools & Memory
-- [ ] MCP tool integration
 - [ ] CLI tool support (lightweight alternative to MCP)
+- [ ] MCP tool integration
 - [ ] File-based memory backend
 - [ ] Agent export/import
 - [ ] CLI: `agnx export`, `agnx import`
@@ -91,21 +90,20 @@ Key specs and design docs:
 - [ ] Built-in tool: `claude_code_exec` (invoke Claude Code headless)
 - [ ] Built-in tool: `opencode_exec` (invoke OpenCode headless)
 - [ ] Supervisor agent pattern (review worker output before committing)
-- [ ] Async notifications (Slack, email, webhook)
 - [ ] Worker session management (track/resume worker sessions)
+- [ ] Async notifications (Slack, email, webhook)
 - [ ] Inbound webhooks (trigger agent from external events like GitHub, CI)
 
 ### v0.8.0 — Production Ready
 - [ ] Comprehensive test suite
-- [ ] OpenAPI documentation
+- [ ] Full documentation (incl. OpenAPI)
 - [ ] Performance benchmarks
 - [ ] Security audit
 
 ### v1.0.0 — Stable Release
 - [ ] Stable API (no breaking changes)
-- [ ] Full documentation
-- [ ] Helm chart for Kubernetes
 - [ ] Published to package managers (cargo, homebrew, apt)
+- [ ] Helm chart for Kubernetes
 - [ ] Community contributions welcome
 
 ### Future — Edge & Embedded

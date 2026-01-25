@@ -31,6 +31,7 @@ pub enum Role {
 
 /// A chat completion response.
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct ChatResponse {
     pub id: String,
     pub choices: Vec<Choice>,
@@ -39,6 +40,7 @@ pub struct ChatResponse {
 
 /// A single completion choice.
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct Choice {
     pub index: u32,
     pub message: Message,
@@ -47,6 +49,7 @@ pub struct Choice {
 
 /// Token usage statistics.
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct Usage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
