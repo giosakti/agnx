@@ -12,6 +12,13 @@ async-trait = "0.1"
 bytes = "1"
 futures = "0.3"
 tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1.18"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Error handling
+anyhow = "1"
 
 # HTTP server
 axum = "0.8"
@@ -19,9 +26,6 @@ tower-http = { version = "0.6", features = ["timeout"] }
 
 # HTTP client
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }
-
-# CLI
-clap = { version = "4", features = ["derive"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

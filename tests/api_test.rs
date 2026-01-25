@@ -145,6 +145,28 @@ async fn test_get_session_not_found() {
     assert_eq!(json["status"], 404);
 }
 
+#[tokio::test]
+async fn test_stream_session_not_found() {
+    let app = test_app();
+
+    let response = app
+        .oneshot(
+            Request::post("/api/v1/sessions/nonexistent/stream")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"content": "hello"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["status"], 404);
+}
+
 // --- Error responses ---
 
 #[tokio::test]

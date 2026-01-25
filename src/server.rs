@@ -28,6 +28,10 @@ pub fn build_app(state: AppState, request_timeout_secs: u64) -> Router {
             "/sessions/{session_id}/messages",
             post(handlers::v1::send_message),
         )
+        .route(
+            "/sessions/{session_id}/stream",
+            post(handlers::v1::stream_session),
+        )
         .with_state(state);
 
     Router::new()
