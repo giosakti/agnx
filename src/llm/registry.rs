@@ -1,17 +1,30 @@
-//! Provider registry for managing LLM provider instances.
+//! Provider registry for managing LLM provider credentials and creation.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use tracing::{info, warn};
 
-use super::provider::{AnthropicProvider, LLMProvider, OpenAICompatibleProvider};
+use super::anthropic::AnthropicProvider;
+use super::openai::OpenAICompatibleProvider;
+use super::provider::LLMProvider;
 use crate::agent::Provider;
 
-/// Registry of LLM providers, keyed by provider type.
+/// Default base URLs for each provider.
+pub mod defaults {
+    pub const ANTHROPIC: &str = "https://api.anthropic.com";
+    pub const OLLAMA: &str = "http://localhost:11434/api";
+    pub const OPENAI: &str = "https://api.openai.com/v1";
+    pub const OPENROUTER: &str = "https://openrouter.ai/api/v1";
+}
+
+/// Registry of LLM provider credentials.
+///
+/// Stores API keys from environment variables and creates provider instances
+/// on-demand with optional base_url overrides from agent configuration.
 #[derive(Clone, Default)]
 pub struct ProviderRegistry {
-    providers: HashMap<Provider, Arc<dyn LLMProvider>>,
+    api_keys: HashMap<Provider, String>,
 }
 
 impl ProviderRegistry {
@@ -19,46 +32,30 @@ impl ProviderRegistry {
         Self::default()
     }
 
-    /// Initialize providers from environment variables.
+    /// Initialize registry with API keys from environment variables.
     pub fn from_env() -> Self {
         let mut registry = Self::new();
 
-        // OpenRouter
-        if let Ok(api_key) = std::env::var("OPENROUTER_API_KEY") {
-            let provider = OpenAICompatibleProvider::new(
-                "https://openrouter.ai/api/v1".to_string(),
-                Some(api_key),
-            );
-            registry.register(Provider::OpenRouter, Arc::new(provider));
-            info!("Registered OpenRouter provider");
-        }
-
-        // OpenAI
-        if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
-            let provider = OpenAICompatibleProvider::new(
-                "https://api.openai.com/v1".to_string(),
-                Some(api_key),
-            );
-            registry.register(Provider::OpenAI, Arc::new(provider));
-            info!("Registered OpenAI provider");
-        }
-
-        // Anthropic
         if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
-            let provider = AnthropicProvider::new(api_key);
-            registry.register(Provider::Anthropic, Arc::new(provider));
-            info!("Registered Anthropic provider");
+            registry.api_keys.insert(Provider::Anthropic, api_key);
+            info!("Found Anthropic API key");
         }
 
-        // Ollama (no auth required, always available if running locally)
-        let ollama = OpenAICompatibleProvider::new("http://localhost:11434/api".to_string(), None);
-        registry.register(Provider::Ollama, Arc::new(ollama));
-        info!("Registered Ollama provider");
+        // Ollama doesn't need an API key
+        registry.api_keys.insert(Provider::Ollama, String::new());
+        info!("Ollama provider available (no API key required)");
 
-        if registry.get(&Provider::OpenRouter).is_none()
-            && registry.get(&Provider::OpenAI).is_none()
-            && registry.get(&Provider::Anthropic).is_none()
-        {
+        if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
+            registry.api_keys.insert(Provider::OpenAI, api_key);
+            info!("Found OpenAI API key");
+        }
+
+        if let Ok(api_key) = std::env::var("OPENROUTER_API_KEY") {
+            registry.api_keys.insert(Provider::OpenRouter, api_key);
+            info!("Found OpenRouter API key");
+        }
+
+        if !registry.has_cloud_provider() {
             warn!(
                 "No cloud LLM providers configured. \
                 Set OPENROUTER_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY."
@@ -68,13 +65,57 @@ impl ProviderRegistry {
         registry
     }
 
-    /// Register a provider implementation.
-    pub fn register(&mut self, provider: Provider, implementation: Arc<dyn LLMProvider>) {
-        self.providers.insert(provider, implementation);
+    /// Check if any cloud provider is configured.
+    fn has_cloud_provider(&self) -> bool {
+        self.api_keys.contains_key(&Provider::Anthropic)
+            || self.api_keys.contains_key(&Provider::OpenAI)
+            || self.api_keys.contains_key(&Provider::OpenRouter)
     }
 
-    /// Get a provider by type.
-    pub fn get(&self, provider: &Provider) -> Option<Arc<dyn LLMProvider>> {
-        self.providers.get(provider).cloned()
+    /// Create a provider instance with optional base_url override.
+    ///
+    /// The base_url comes from the agent's model configuration. If not specified,
+    /// the default URL for that provider is used.
+    pub fn get(&self, provider: &Provider, base_url: Option<&str>) -> Option<Arc<dyn LLMProvider>> {
+        match provider {
+            Provider::Anthropic => {
+                let api_key = self.api_keys.get(provider)?;
+                let url = base_url.unwrap_or(defaults::ANTHROPIC);
+                Some(Arc::new(AnthropicProvider::new(
+                    api_key.clone(),
+                    url.to_string(),
+                )))
+            }
+            Provider::Ollama => {
+                if !self.api_keys.contains_key(provider) {
+                    return None;
+                }
+                let url = base_url.unwrap_or(defaults::OLLAMA);
+                Some(Arc::new(OpenAICompatibleProvider::new(
+                    url.to_string(),
+                    None,
+                )))
+            }
+            Provider::OpenAI => {
+                let api_key = self.api_keys.get(provider)?;
+                let url = base_url.unwrap_or(defaults::OPENAI);
+                Some(Arc::new(OpenAICompatibleProvider::new(
+                    url.to_string(),
+                    Some(api_key.clone()),
+                )))
+            }
+            Provider::OpenRouter => {
+                let api_key = self.api_keys.get(provider)?;
+                let url = base_url.unwrap_or(defaults::OPENROUTER);
+                Some(Arc::new(OpenAICompatibleProvider::new(
+                    url.to_string(),
+                    Some(api_key.clone()),
+                )))
+            }
+            Provider::Other(name) => {
+                warn!("Unknown provider: {}", name);
+                None
+            }
+        }
     }
 }

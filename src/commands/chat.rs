@@ -42,8 +42,11 @@ pub async fn run(
     // Initialize LLM providers
     let providers = llm::ProviderRegistry::from_env();
 
-    // Get the provider for this agent
-    let Some(provider) = providers.get(&agent_spec.model.provider) else {
+    // Get the provider for this agent (with optional base_url from agent config)
+    let Some(provider) = providers.get(
+        &agent_spec.model.provider,
+        agent_spec.model.base_url.as_deref(),
+    ) else {
         return Err(format!(
             "Provider '{}' not configured. Set the appropriate API key environment variable.",
             agent_spec.model.provider

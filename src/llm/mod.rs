@@ -1,9 +1,15 @@
 //! LLM provider client for chat completions.
 
+mod anthropic;
 mod error;
+mod openai;
 mod provider;
 mod registry;
 mod types;
 
+pub use anthropic::AnthropicProvider;
+pub use error::LLMError;
+pub use openai::OpenAICompatibleProvider;
+pub use provider::LLMProvider;
 pub use registry::ProviderRegistry;
-pub use types::{ChatRequest, Message, Role};
+pub use types::{ChatRequest, ChatStream, Message, Role, StreamEvent, Usage};

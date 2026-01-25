@@ -12,4 +12,5 @@ mod spec;
 mod store;
 
 pub use provider::Provider;
+pub use spec::{AgentSessionConfig, OnDisconnect};
 pub use store::{AgentStore, log_scan_warnings, resolve_agents_dir};

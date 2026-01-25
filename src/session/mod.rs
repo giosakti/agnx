@@ -1,6 +1,16 @@
-//! In-memory session store for v0.1.0.
+//! Session management for Agnx.
 //!
-//! Will be replaced with persistent storage (JSONL + YAML snapshots) in v0.2.0.
+//! v0.1.0: In-memory session store.
+//! v0.2.0: Persistent storage with JSONL event log + YAML snapshots.
+
+mod events;
+mod snapshot;
+
+pub use events::{
+    SessionEndReason, SessionEvent, SessionEventPayload, SessionStatusValue, TokenUsage,
+    ToolResultData,
+};
+pub use snapshot::{OnDisconnect, SessionConfig, SessionSnapshot, SnapshotStatus};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,7 +35,7 @@ pub struct Session {
 
 /// Session status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum SessionStatus {
     Active,
 }

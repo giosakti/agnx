@@ -141,8 +141,11 @@ pub async fn send_message(
         messages.extend(history);
     }
 
-    // Get provider from registry
-    let Some(provider) = state.providers.get(&agent.model.provider) else {
+    // Get provider from registry (with optional base_url from agent config)
+    let Some(provider) = state
+        .providers
+        .get(&agent.model.provider, agent.model.base_url.as_deref())
+    else {
         return response::internal_error(format!(
             "Provider '{}' not configured. Check API key environment variable.",
             agent.model.provider

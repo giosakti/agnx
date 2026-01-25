@@ -1,6 +1,6 @@
 //! AAF agent specification parsing.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -18,6 +18,27 @@ pub struct AgentSpec {
     pub model: ModelConfig,
     pub system_prompt: Option<String>,
     pub instructions: Option<String>,
+    /// Session behavior configuration.
+    pub session: AgentSessionConfig,
+}
+
+/// Session behavior configuration for an agent.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct AgentSessionConfig {
+    /// Behavior when client disconnects from a session.
+    #[serde(default)]
+    pub on_disconnect: OnDisconnect,
+}
+
+/// Behavior when client disconnects from a session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OnDisconnect {
+    /// Pause the session and wait for reconnect (default).
+    #[default]
+    Pause,
+    /// Continue executing in the background.
+    Continue,
 }
 
 /// Agent metadata from the AAF spec.
@@ -65,6 +86,8 @@ struct RawAgentSpecBody {
     model: ModelConfig,
     system_prompt: Option<String>,
     instructions: Option<String>,
+    #[serde(default)]
+    session: AgentSessionConfig,
 }
 
 impl AgentSpec {
@@ -142,6 +165,7 @@ impl AgentSpec {
                 model: raw.spec.model,
                 system_prompt,
                 instructions,
+                session: raw.spec.session,
             },
             warnings,
         ))
@@ -312,6 +336,67 @@ spec:
         assert_eq!(
             agent.metadata.labels.get("tier"),
             Some(&"premium".to_string())
+        );
+    }
+
+    #[test]
+    fn load_agent_with_session_config() {
+        let tmp = TempDir::new().unwrap();
+        let agent_dir = tmp.path().join("test-agent");
+        fs::create_dir(&agent_dir).unwrap();
+
+        write_yaml(
+            &agent_dir,
+            r#"apiVersion: agnx/v1alpha1
+kind: Agent
+metadata:
+  name: background-worker
+spec:
+  model:
+    provider: openrouter
+    name: anthropic/claude-sonnet-4
+  session:
+    on_disconnect: continue
+"#,
+        );
+
+        let (agent, warnings) = AgentSpec::load_with_warnings(&agent_dir).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(agent.session.on_disconnect, OnDisconnect::Continue);
+    }
+
+    #[test]
+    fn load_agent_session_defaults_to_pause() {
+        let tmp = TempDir::new().unwrap();
+        let agent_dir = tmp.path().join("test-agent");
+        fs::create_dir(&agent_dir).unwrap();
+
+        write_yaml(
+            &agent_dir,
+            r#"apiVersion: agnx/v1alpha1
+kind: Agent
+metadata:
+  name: test-agent
+spec:
+  model:
+    provider: openrouter
+    name: anthropic/claude-sonnet-4
+"#,
+        );
+
+        let (agent, _) = AgentSpec::load_with_warnings(&agent_dir).unwrap();
+        assert_eq!(agent.session.on_disconnect, OnDisconnect::Pause);
+    }
+
+    #[test]
+    fn on_disconnect_serialization() {
+        assert_eq!(
+            serde_json::to_string(&OnDisconnect::Pause).unwrap(),
+            "\"pause\""
+        );
+        assert_eq!(
+            serde_json::to_string(&OnDisconnect::Continue).unwrap(),
+            "\"continue\""
         );
     }
 }

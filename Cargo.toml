@@ -7,13 +7,18 @@ license = "MIT"
 repository = "https://github.com/giosakti/agnx"
 
 [dependencies]
+# Async runtime
+async-trait = "0.1"
+bytes = "1"
+futures = "0.3"
+tokio = { version = "1", features = ["full"] }
+
 # HTTP server
 axum = "0.8"
-tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.6", features = ["timeout"] }
 
 # HTTP client
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }
 
 # CLI
 clap = { version = "4", features = ["derive"] }
@@ -23,24 +28,16 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde-saphyr = "0.0"
 
-# Logging
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-# Time and IDs
-chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 
-# Async traits
-async-trait = "0.1"
-
-[build-dependencies]
-# Build info injection is handled via build.rs
-
 [dev-dependencies]
+http-body-util = "0.1"
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
-http-body-util = "0.1"
 
 [lib]
 name = "agnx"

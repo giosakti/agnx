@@ -1,6 +1,8 @@
 //! Common types for LLM chat completions.
 
+use futures::Stream;
 use serde::{Deserialize, Serialize};
+use std::pin::Pin;
 
 /// A chat completion request (OpenAI-compatible format).
 #[derive(Debug, Serialize)]
@@ -22,7 +24,7 @@ pub struct Message {
 
 /// The role of a message sender.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum Role {
     System,
     User,
@@ -31,7 +33,6 @@ pub enum Role {
 
 /// A chat completion response.
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct ChatResponse {
     pub id: String,
     pub choices: Vec<Choice>,
@@ -40,7 +41,6 @@ pub struct ChatResponse {
 
 /// A single completion choice.
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct Choice {
     pub index: u32,
     pub message: Message,
@@ -48,13 +48,25 @@ pub struct Choice {
 }
 
 /// Token usage statistics.
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Usage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
 }
+
+/// Events emitted during streaming chat completion.
+#[derive(Debug, Clone)]
+pub enum StreamEvent {
+    /// A content token from the assistant.
+    Token(String),
+    /// The stream is complete with optional usage stats.
+    Done { usage: Option<Usage> },
+}
+
+/// A boxed stream of streaming events.
+pub type ChatStream =
+    Pin<Box<dyn Stream<Item = Result<StreamEvent, super::error::LLMError>> + Send>>;
 
 #[cfg(test)]
 mod tests {
