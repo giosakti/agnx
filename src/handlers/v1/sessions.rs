@@ -1,3 +1,5 @@
+//! Session management HTTP handlers.
+
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,6 +16,10 @@ use uuid::Uuid;
 use crate::llm::{ChatRequest, LLMProvider, Message, Role, StreamEvent};
 use crate::response;
 use crate::server::AppState;
+
+// ============================================================================
+// Request/Response Types
+// ============================================================================
 
 #[derive(Deserialize)]
 pub struct CreateSessionRequest {
@@ -43,33 +49,21 @@ pub struct SendMessageRequest {
 }
 
 #[derive(Serialize)]
-struct TokenData {
-    content: String,
-}
-
-#[derive(Serialize)]
-struct DoneData {
-    usage: Option<crate::llm::Usage>,
-}
-
-#[derive(Serialize)]
-struct ErrorData {
-    message: String,
-}
-
-#[derive(Serialize)]
 pub struct SendMessageResponse {
     message_id: String,
     role: String,
     content: String,
 }
 
+// ============================================================================
+// Handlers
+// ============================================================================
+
 /// POST /api/v1/sessions
 pub async fn create_session(
     State(state): State<AppState>,
     Json(req): Json<CreateSessionRequest>,
 ) -> Response {
-    // Verify agent exists
     if state.agents.get(&req.agent).is_none() {
         return response::not_found(format!("Agent '{}' not found", req.agent)).into_response();
     }
@@ -106,6 +100,99 @@ pub async fn get_session(
     (StatusCode::OK, Json(response)).into_response()
 }
 
+/// POST /api/v1/sessions/{session_id}/messages
+pub async fn send_message(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(req): Json<SendMessageRequest>,
+) -> Response {
+    let (chat_request, provider) =
+        match prepare_chat_context(&state, &session_id, req.content).await {
+            Ok(ctx) => ctx,
+            Err(resp) => return resp,
+        };
+
+    let chat_response = match provider.chat(chat_request).await {
+        Ok(resp) => resp,
+        Err(e) => {
+            return response::internal_error(format!("LLM request failed: {}", e)).into_response();
+        }
+    };
+
+    let assistant_content = chat_response
+        .choices
+        .first()
+        .map(|c| c.message.content.clone())
+        .unwrap_or_default();
+
+    let assistant_message = Message {
+        role: Role::Assistant,
+        content: assistant_content.clone(),
+    };
+    let _ = state
+        .sessions
+        .add_message(&session_id, assistant_message)
+        .await;
+
+    let response = SendMessageResponse {
+        message_id: format!("msg_{}", Uuid::new_v4().simple()),
+        role: "assistant".to_string(),
+        content: assistant_content,
+    };
+
+    (StatusCode::OK, Json(response)).into_response()
+}
+
+/// POST /api/v1/sessions/{session_id}/stream
+///
+/// SSE endpoint for streaming chat completions.
+///
+/// Request body: `{"content": "..."}`
+///
+/// Events emitted:
+/// - `start`: `{}` — signals streaming has begun
+/// - `token`: `{"content": "..."}` — streamed content chunks
+/// - `done`: `{"message_id": "msg_...", "usage": {...}}` — stream complete with message ID
+/// - `error`: `{"message": "..."}` — on error (timeout, LLM failure)
+pub async fn stream_session(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(req): Json<SendMessageRequest>,
+) -> Response {
+    let (chat_request, provider) =
+        match prepare_chat_context(&state, &session_id, req.content).await {
+            Ok(ctx) => ctx,
+            Err(resp) => return resp,
+        };
+
+    let stream = match provider.chat_stream(chat_request).await {
+        Ok(s) => s,
+        Err(e) => {
+            return response::internal_error(format!("LLM request failed: {}", e)).into_response();
+        }
+    };
+
+    let message_id = format!("msg_{}", Uuid::new_v4().simple());
+
+    let sse_stream = AccumulatingStream::new(
+        stream,
+        state.sessions.clone(),
+        session_id,
+        message_id,
+        Duration::from_secs(state.idle_timeout_seconds),
+    );
+
+    let keep_alive = KeepAlive::new()
+        .interval(Duration::from_secs(state.keep_alive_interval_seconds))
+        .text("keep-alive");
+
+    Sse::new(sse_stream).keep_alive(keep_alive).into_response()
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
 /// Prepare chat context for LLM request.
 ///
 /// Validates session and agent, adds user message, builds system prompt and history,
@@ -115,19 +202,16 @@ async fn prepare_chat_context(
     session_id: &str,
     user_content: String,
 ) -> Result<(ChatRequest, Arc<dyn LLMProvider>), Response> {
-    // Get session
     let Some(session) = state.sessions.get(session_id).await else {
         return Err(response::not_found("Session not found").into_response());
     };
 
-    // Get agent spec
     let Some(agent) = state.agents.get(&session.agent) else {
         return Err(
             response::internal_error("Session references non-existent agent").into_response(),
         );
     };
 
-    // Add user message to session
     let user_message = Message {
         role: Role::User,
         content: user_content,
@@ -162,12 +246,10 @@ async fn prepare_chat_context(
         });
     }
 
-    // Add conversation history
     if let Some(history) = state.sessions.get_messages(session_id).await {
         messages.extend(history);
     }
 
-    // Get provider from registry
     let Some(provider) = state
         .providers
         .get(&agent.model.provider, agent.model.base_url.as_deref())
@@ -179,7 +261,6 @@ async fn prepare_chat_context(
         .into_response());
     };
 
-    // Build chat request
     let chat_request = ChatRequest {
         model: agent.model.name.clone(),
         messages,
@@ -190,112 +271,55 @@ async fn prepare_chat_context(
     Ok((chat_request, provider))
 }
 
-/// POST /api/v1/sessions/{session_id}/messages
-pub async fn send_message(
-    State(state): State<AppState>,
-    Path(session_id): Path<String>,
-    Json(req): Json<SendMessageRequest>,
-) -> Response {
-    let (chat_request, provider) =
-        match prepare_chat_context(&state, &session_id, req.content).await {
-            Ok(ctx) => ctx,
-            Err(resp) => return resp,
-        };
+// ============================================================================
+// SSE Streaming
+// ============================================================================
 
-    let chat_response = match provider.chat(chat_request).await {
-        Ok(resp) => resp,
-        Err(e) => {
-            return response::internal_error(format!("LLM request failed: {}", e)).into_response();
-        }
-    };
+// --- SSE Event Data Types ---
 
-    // Extract assistant response
-    let assistant_content = chat_response
-        .choices
-        .first()
-        .map(|c| c.message.content.clone())
-        .unwrap_or_default();
-
-    // Add assistant message to session
-    let assistant_message = Message {
-        role: Role::Assistant,
-        content: assistant_content.clone(),
-    };
-    let _ = state
-        .sessions
-        .add_message(&session_id, assistant_message)
-        .await;
-
-    let response = SendMessageResponse {
-        message_id: format!("msg_{}", Uuid::new_v4().simple()),
-        role: "assistant".to_string(),
-        content: assistant_content,
-    };
-
-    (StatusCode::OK, Json(response)).into_response()
+#[derive(Serialize)]
+struct TokenData {
+    content: String,
 }
 
-/// POST /api/v1/sessions/{session_id}/stream
-///
-/// SSE endpoint for streaming chat completions.
-/// Request body: {"content": "..."}
-/// Events emitted:
-/// - `token`: {"content": "..."}
-/// - `done`: {"usage": {...}}
-/// - `error`: {"message": "..."}
-pub async fn stream_session(
-    State(state): State<AppState>,
-    Path(session_id): Path<String>,
-    Json(req): Json<SendMessageRequest>,
-) -> Response {
-    let (chat_request, provider) =
-        match prepare_chat_context(&state, &session_id, req.content).await {
-            Ok(ctx) => ctx,
-            Err(resp) => return resp,
-        };
-
-    // Get streaming response
-    let stream = match provider.chat_stream(chat_request).await {
-        Ok(s) => s,
-        Err(e) => {
-            return response::internal_error(format!("LLM request failed: {}", e)).into_response();
-        }
-    };
-
-    // Create SSE stream that accumulates tokens and stores the message when done
-    // Apply idle timeout to close connection if no tokens received for too long
-    let sse_stream = AccumulatingStream::new(
-        stream,
-        state.sessions.clone(),
-        session_id,
-        Duration::from_secs(state.idle_timeout_seconds),
-    );
-
-    // Configure SSE with keep-alive to prevent proxies from closing idle connections
-    let keep_alive = KeepAlive::new()
-        .interval(Duration::from_secs(state.keep_alive_interval_seconds))
-        .text("keep-alive");
-
-    Sse::new(sse_stream).keep_alive(keep_alive).into_response()
+#[derive(Serialize)]
+struct DoneData {
+    message_id: String,
+    usage: Option<crate::llm::Usage>,
 }
 
-/// Inner stream type with timeout wrapper.
-type TimedLLMStream = std::pin::Pin<
-    Box<
-        dyn futures::Stream<
-                Item = Result<Result<StreamEvent, crate::llm::LLMError>, tokio_stream::Elapsed>,
-            > + Send,
-    >,
->;
+#[derive(Serialize)]
+struct ErrorData {
+    message: String,
+}
+
+// --- Stream Types ---
+
+/// Unified error type for streaming, flattening nested Results.
+enum StreamError {
+    Llm(crate::llm::LLMError),
+    Timeout,
+}
+
+/// Inner stream type that flattens `Result<Result<T, LLMError>, Elapsed>` into `Result<T, StreamError>`.
+type FlattenedLLMStream =
+    std::pin::Pin<Box<dyn futures::Stream<Item = Result<StreamEvent, StreamError>> + Send>>;
+
+// --- AccumulatingStream ---
 
 /// A stream wrapper that accumulates token content and stores the assistant message when done.
-/// Implements idle timeout via tokio_stream::StreamExt::timeout().
-/// Uses Drop to ensure partial messages are saved even if the connection is aborted.
+///
+/// Features:
+/// - Idle timeout via `tokio_stream::StreamExt::timeout()`
+/// - Drop safety: saves partial messages if the connection aborts
+/// - Emits `start` event before streaming, `done` event with message ID when complete
 struct AccumulatingStream {
-    inner: TimedLLMStream,
+    inner: FlattenedLLMStream,
+    message_id: String,
     accumulated: String,
     sessions: crate::session::SessionStore,
     session_id: String,
+    started: bool,
     finished: bool,
 }
 
@@ -304,15 +328,24 @@ impl AccumulatingStream {
         inner: crate::llm::ChatStream,
         sessions: crate::session::SessionStore,
         session_id: String,
+        message_id: String,
         idle_timeout: Duration,
     ) -> Self {
-        // Wrap the inner stream with timeout - each item must arrive within idle_timeout
+        // Wrap the inner stream with timeout and flatten the nested Results
         let timed_stream = inner.timeout(idle_timeout);
+        let flattened = tokio_stream::StreamExt::map(timed_stream, |result| match result {
+            Ok(Ok(event)) => Ok(event),
+            Ok(Err(llm_err)) => Err(StreamError::Llm(llm_err)),
+            Err(_elapsed) => Err(StreamError::Timeout),
+        });
+
         Self {
-            inner: Box::pin(timed_stream),
+            inner: Box::pin(flattened),
+            message_id,
             accumulated: String::new(),
             sessions,
             session_id,
+            started: false,
             finished: false,
         }
     }
@@ -323,6 +356,7 @@ impl AccumulatingStream {
             let sessions = self.sessions.clone();
             let session_id = self.session_id.clone();
             let content = std::mem::take(&mut self.accumulated);
+
             tokio::spawn(async move {
                 let assistant_message = Message {
                     role: Role::Assistant,
@@ -357,9 +391,37 @@ impl futures::Stream for AccumulatingStream {
             return Poll::Ready(None);
         }
 
+        // Emit start event on first poll
+        if !self.started {
+            self.started = true;
+            let event = Event::default().event("start").data("{}");
+            return Poll::Ready(Some(Ok(event)));
+        }
+
         match self.inner.as_mut().poll_next(cx) {
-            // Timeout elapsed - no token received within idle_timeout
-            Poll::Ready(Some(Err(_elapsed))) => {
+            Poll::Ready(Some(Ok(StreamEvent::Token(content)))) => {
+                self.accumulated.push_str(&content);
+                let event = Event::default()
+                    .event("token")
+                    .json_data(TokenData { content })
+                    .unwrap_or_else(|_| Event::default().event("token").data("{}"));
+                Poll::Ready(Some(Ok(event)))
+            }
+
+            Poll::Ready(Some(Ok(StreamEvent::Done { usage }))) => {
+                self.finished = true;
+                self.save_accumulated();
+                let event = Event::default()
+                    .event("done")
+                    .json_data(DoneData {
+                        message_id: self.message_id.clone(),
+                        usage,
+                    })
+                    .unwrap_or_else(|_| Event::default().event("done").data("{}"));
+                Poll::Ready(Some(Ok(event)))
+            }
+
+            Poll::Ready(Some(Err(StreamError::Timeout))) => {
                 self.finished = true;
                 self.save_accumulated();
                 let event = Event::default()
@@ -370,27 +432,8 @@ impl futures::Stream for AccumulatingStream {
                     .unwrap_or_else(|_| Event::default().event("error").data("{}"));
                 Poll::Ready(Some(Ok(event)))
             }
-            // Token received
-            Poll::Ready(Some(Ok(Ok(StreamEvent::Token(content))))) => {
-                self.accumulated.push_str(&content);
-                let event = Event::default()
-                    .event("token")
-                    .json_data(TokenData { content })
-                    .unwrap_or_else(|_| Event::default().event("token").data("{}"));
-                Poll::Ready(Some(Ok(event)))
-            }
-            // Stream completed normally
-            Poll::Ready(Some(Ok(Ok(StreamEvent::Done { usage })))) => {
-                self.finished = true;
-                self.save_accumulated();
-                let event = Event::default()
-                    .event("done")
-                    .json_data(DoneData { usage })
-                    .unwrap_or_else(|_| Event::default().event("done").data("{}"));
-                Poll::Ready(Some(Ok(event)))
-            }
-            // LLM error
-            Poll::Ready(Some(Ok(Err(e)))) => {
+
+            Poll::Ready(Some(Err(StreamError::Llm(e)))) => {
                 self.finished = true;
                 self.save_accumulated();
                 let event = Event::default()
@@ -401,12 +444,13 @@ impl futures::Stream for AccumulatingStream {
                     .unwrap_or_else(|_| Event::default().event("error").data("{}"));
                 Poll::Ready(Some(Ok(event)))
             }
-            // Inner stream ended
+
             Poll::Ready(None) => {
                 self.finished = true;
                 self.save_accumulated();
                 Poll::Ready(None)
             }
+
             Poll::Pending => Poll::Pending,
         }
     }
