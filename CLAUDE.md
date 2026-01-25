@@ -44,7 +44,7 @@ Self-host it directly, or use it as the foundation for agent-powered products.
 ## Strategic Documents
 
 - **[README](README.md)**
-- **[Project status / roadmap](./docs/specs/PROJECT_STATUS.md)**
+- **[Project status / roadmap](./docs/PROJECT_STATUS.md)**
 - **[Project Charter](./docs/specs/202601111100.project-charter.md)**
 - **[Architecture](./docs/specs/202601111101.architecture.md)**
 - **[API Reference](./docs/specs/202601111102.api-reference.md)**

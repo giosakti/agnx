@@ -119,7 +119,7 @@ agnx attach session_abc123
 
 | Document | Description |
 |----------|-------------|
-| [Project Status](./docs/specs/PROJECT_STATUS.md) | Roadmap and current focus |
+| [Project Status](./docs/PROJECT_STATUS.md) | Roadmap and current focus |
 | [Project Charter](./docs/specs/202601111100.project-charter.md) | Vision, goals, and principles |
 | [Architecture](./docs/specs/202601111101.architecture.md) | System design and components |
 | [API Reference](./docs/specs/202601111102.api-reference.md) | HTTP API and CLI commands |
