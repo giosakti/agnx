@@ -1,3 +1,5 @@
+//! AAF agent specification parsing.
+
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;

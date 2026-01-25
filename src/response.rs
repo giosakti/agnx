@@ -1,3 +1,5 @@
+//! RFC 7807 Problem Details for HTTP error responses.
+
 use axum::Json;
 use axum::http::HeaderValue;
 use axum::http::StatusCode;

@@ -1,5 +1,5 @@
-use crate::agent::AgentStore;
 use crate::response;
+use crate::server::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -63,8 +63,9 @@ pub struct ModelResponse {
     base_url: Option<String>,
 }
 
-pub async fn list_agents(State(store): State<AgentStore>) -> Json<AgentsResponse> {
-    let agents: Vec<AgentSummary> = store
+pub async fn list_agents(State(state): State<AppState>) -> Json<AgentsResponse> {
+    let agents: Vec<AgentSummary> = state
+        .agents
         .iter()
         .map(|(_, spec)| AgentSummary {
             name: spec.metadata.name.clone(),
@@ -76,8 +77,8 @@ pub async fn list_agents(State(store): State<AgentStore>) -> Json<AgentsResponse
     Json(AgentsResponse { agents })
 }
 
-pub async fn get_agent(State(store): State<AgentStore>, Path(name): Path<String>) -> Response {
-    let Some(agent) = store.get(&name) else {
+pub async fn get_agent(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    let Some(agent) = state.agents.get(&name) else {
         return response::not_found(format!("Agent '{name}' not found")).into_response();
     };
 

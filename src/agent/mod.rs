@@ -11,4 +11,5 @@ mod provider;
 mod spec;
 mod store;
 
+pub use provider::Provider;
 pub use store::{AgentStore, log_scan_warnings, resolve_agents_dir};

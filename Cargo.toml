@@ -12,6 +12,9 @@ axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.6", features = ["timeout"] }
 
+# HTTP client
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+
 # CLI
 clap = { version = "4", features = ["derive"] }
 
@@ -23,6 +26,13 @@ serde-saphyr = "0.0"
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Time and IDs
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+
+# Async traits
+async-trait = "0.1"
 
 [build-dependencies]
 # Build info injection is handled via build.rs

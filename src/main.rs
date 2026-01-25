@@ -2,16 +2,20 @@ mod agent;
 mod build_info;
 mod config;
 mod handlers;
+mod llm;
 mod response;
 mod server;
+mod session;
 
-use clap::{Parser, Subcommand};
-use config::Config;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
+
+use clap::{Parser, Subcommand};
 use tokio::signal;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
+
+use config::Config;
 
 /// Agnx - A minimal and fast self-hosted runtime for durable and portable AI agents
 #[derive(Parser, Debug)]
@@ -94,7 +98,20 @@ async fn run_server(
     info!(agents_dir = %agents_dir.display(), agents = scan.store.len(), "Loaded agents");
     agent::log_scan_warnings(&scan.warnings);
 
-    let app = server::build_app(scan.store, config.server.request_timeout);
+    // Initialize LLM providers from environment
+    let providers = llm::ProviderRegistry::from_env();
+
+    // Initialize session store
+    let sessions = session::SessionStore::new();
+
+    // Build app state
+    let state = server::AppState {
+        agents: scan.store,
+        providers,
+        sessions,
+    };
+
+    let app = server::build_app(state, config.server.request_timeout);
 
     let ip: IpAddr = config.server.host.parse()?;
     let addr = SocketAddr::new(ip, config.server.port);
