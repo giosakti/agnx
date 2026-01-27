@@ -69,3 +69,14 @@ Self-host it directly, or use it as the foundation for agent-powered products.
 - **Config:** `serde` for YAML/JSON, environment variables via `${VAR}` syntax
 - **Logging:** `tracing` crate with structured spans
 - **Tests:** Unit tests inline, integration tests in `tests/`
+
+## Release Protocol
+
+1. **Update `Cargo.toml`** — bump `version = "0.x.0"`
+2. **Update `CHANGELOG.md`**:
+   - Move items from `[Unreleased]` to new `[0.x.0] - YYYY-MM-DD` section
+   - Add comparison link at bottom
+3. **Update `PROJECT_STATUS.md`** — mark milestone complete, update recent accomplishments
+4. **Commit** — `git commit -m "Release v0.x.0"`
+5. **Tag** — `git tag v0.x.0`
+6. **Push** — `git push && git push --tags`
