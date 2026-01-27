@@ -1,5 +1,9 @@
 use serde::Serialize;
 
+// ============================================================================
+// Constants
+// ============================================================================
+
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const COMMIT: &str = env!("BUILD_COMMIT");
 pub const BUILD_DATE: &str = env!("BUILD_DATE");
@@ -12,6 +16,10 @@ pub const VERSION_STRING: &str = concat!(
     ")"
 );
 
+// ============================================================================
+// BuildInfo
+// ============================================================================
+
 #[derive(Debug, Serialize)]
 pub struct BuildInfo {
     pub version: &'static str,
@@ -20,6 +28,7 @@ pub struct BuildInfo {
 }
 
 impl BuildInfo {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             version: VERSION,
@@ -34,6 +43,10 @@ impl Default for BuildInfo {
         Self::new()
     }
 }
+
+// ============================================================================
+// Tests
+// ============================================================================
 
 #[cfg(test)]
 mod tests {

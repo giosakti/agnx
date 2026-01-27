@@ -1,12 +1,14 @@
-use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use tokio::fs;
 
-// -----------------------------------------------------------------------------
+use serde::Deserialize;
+use thiserror::Error;
+
+// ============================================================================
 // Config (root)
-// -----------------------------------------------------------------------------
+// ============================================================================
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
@@ -29,14 +31,14 @@ impl Default for Config {
 }
 
 impl Config {
-    pub fn load(path: &str) -> Result<Self, ConfigError> {
-        let path = Path::new(path);
-        let contents = match fs::read_to_string(path) {
+    pub async fn load(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
+        let path = path.as_ref();
+        let contents = match fs::read_to_string(path).await {
             Ok(c) => c,
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Self::default()),
             Err(e) => return Err(ConfigError::Io(e)),
         };
-        serde_saphyr::from_str(&contents).map_err(ConfigError::Yaml)
+        Ok(serde_saphyr::from_str(&contents)?)
     }
 }
 
@@ -44,9 +46,9 @@ fn default_agents_dir() -> PathBuf {
     PathBuf::from(".agnx/agents")
 }
 
-// -----------------------------------------------------------------------------
+// ============================================================================
 // ServerConfig
-// -----------------------------------------------------------------------------
+// ============================================================================
 
 #[derive(Debug, Deserialize)]
 pub struct ServerConfig {
@@ -60,6 +62,10 @@ pub struct ServerConfig {
     pub idle_timeout_seconds: u64,
     #[serde(default = "default_keep_alive_interval")]
     pub keep_alive_interval_seconds: u64,
+    /// Optional admin API token. If set, admin endpoints require this token.
+    /// If not set, admin endpoints only accept requests from localhost.
+    #[serde(default)]
+    pub admin_token: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -70,6 +76,7 @@ impl Default for ServerConfig {
             request_timeout_seconds: default_request_timeout(),
             idle_timeout_seconds: default_idle_timeout(),
             keep_alive_interval_seconds: default_keep_alive_interval(),
+            admin_token: None,
         }
     }
 }
@@ -94,9 +101,9 @@ fn default_keep_alive_interval() -> u64 {
     15
 }
 
-// -----------------------------------------------------------------------------
+// ============================================================================
 // ServicesConfig
-// -----------------------------------------------------------------------------
+// ============================================================================
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ServicesConfig {
@@ -104,9 +111,9 @@ pub struct ServicesConfig {
     pub session: SessionServiceConfig,
 }
 
-// -----------------------------------------------------------------------------
+// ============================================================================
 // SessionServiceConfig
-// -----------------------------------------------------------------------------
+// ============================================================================
 
 #[derive(Debug, Deserialize)]
 pub struct SessionServiceConfig {
@@ -126,37 +133,22 @@ fn default_session_path() -> PathBuf {
     PathBuf::from(".agnx/sessions")
 }
 
-// -----------------------------------------------------------------------------
+// ============================================================================
 // ConfigError
-// -----------------------------------------------------------------------------
+// ============================================================================
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum ConfigError {
-    Io(std::io::Error),
-    Yaml(serde_saphyr::Error),
+    #[error("failed to read config file: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("failed to parse config file: {0}")]
+    Yaml(#[from] serde_saphyr::Error),
 }
 
-impl std::fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ConfigError::Io(e) => write!(f, "failed to read config file: {e}"),
-            ConfigError::Yaml(e) => write!(f, "failed to parse config file: {e}"),
-        }
-    }
-}
-
-impl std::error::Error for ConfigError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            ConfigError::Io(e) => Some(e),
-            ConfigError::Yaml(e) => Some(e),
-        }
-    }
-}
-
-// -----------------------------------------------------------------------------
+// ============================================================================
 // Tests
-// -----------------------------------------------------------------------------
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -179,17 +171,17 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_load_missing_file_returns_defaults() {
+    #[tokio::test]
+    async fn test_load_missing_file_returns_defaults() {
         let tmp_dir = TempDir::new().unwrap();
         let missing_path = tmp_dir.path().join("missing-config.yaml");
-        let config = Config::load(missing_path.to_str().unwrap()).unwrap();
+        let config = Config::load(missing_path.to_str().unwrap()).await.unwrap();
         assert_eq!(config.server.host, "0.0.0.0");
         assert_eq!(config.server.port, 8080);
     }
 
-    #[test]
-    fn test_load_valid_yaml() {
+    #[tokio::test]
+    async fn test_load_valid_yaml() {
         let mut file = NamedTempFile::new().unwrap();
         writeln!(
             file,
@@ -205,7 +197,7 @@ agents_dir: ".agnx/agents-custom"
         )
         .unwrap();
 
-        let config = Config::load(file.path().to_str().unwrap()).unwrap();
+        let config = Config::load(file.path().to_str().unwrap()).await.unwrap();
         assert_eq!(config.server.host, "127.0.0.1");
         assert_eq!(config.server.port, 3000);
         assert_eq!(config.server.request_timeout_seconds, 60);
@@ -214,8 +206,8 @@ agents_dir: ".agnx/agents-custom"
         assert_eq!(config.agents_dir, PathBuf::from(".agnx/agents-custom"));
     }
 
-    #[test]
-    fn test_load_partial_yaml_uses_defaults() {
+    #[tokio::test]
+    async fn test_load_partial_yaml_uses_defaults() {
         let mut file = NamedTempFile::new().unwrap();
         writeln!(
             file,
@@ -226,7 +218,7 @@ server:
         )
         .unwrap();
 
-        let config = Config::load(file.path().to_str().unwrap()).unwrap();
+        let config = Config::load(file.path().to_str().unwrap()).await.unwrap();
         assert_eq!(config.server.host, "0.0.0.0"); // default
         assert_eq!(config.server.port, 9000);
         assert_eq!(config.server.request_timeout_seconds, 300); // default
@@ -235,12 +227,12 @@ server:
         assert_eq!(config.agents_dir, PathBuf::from(".agnx/agents")); // default
     }
 
-    #[test]
-    fn test_load_invalid_yaml() {
+    #[tokio::test]
+    async fn test_load_invalid_yaml() {
         let mut file = NamedTempFile::new().unwrap();
         writeln!(file, "invalid: yaml: content: [").unwrap();
 
-        let result = Config::load(file.path().to_str().unwrap());
+        let result = Config::load(file.path().to_str().unwrap()).await;
         assert!(result.is_err());
     }
 
