@@ -1,79 +1,100 @@
 //! Session management HTTP handlers.
 
-use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path as PathExtract, Query, State};
 use axum::http::StatusCode;
-use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::sse::{KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use serde::{Deserialize, Serialize};
-use tokio_stream::StreamExt;
+use serde::Deserialize;
+use tokio_util::sync::CancellationToken;
+use tracing::debug;
 use uuid::Uuid;
 
-use crate::llm::{ChatRequest, LLMProvider, Message, Role, StreamEvent};
-use crate::response;
+use crate::agent::OnDisconnect;
+use crate::api::{
+    CreateSessionRequest, CreateSessionResponse, GetMessagesResponse, GetSessionResponse,
+    ListSessionsResponse, MessageResponse, SendMessageRequest, SendMessageResponse, SessionStatus,
+    SessionSummary,
+};
+use crate::handlers::problem_details;
+use crate::llm::{ChatRequest, LLMProvider, Message, Role};
 use crate::server::AppState;
+use crate::session::{
+    AccumulatingStream, SessionContext, SessionEventPayload, StreamConfig, build_chat_request,
+    build_system_message, commit_event, persist_assistant_message, record_event,
+};
 
 // ============================================================================
-// Request/Response Types
+// Query Types
 // ============================================================================
 
 #[derive(Deserialize)]
-pub struct CreateSessionRequest {
-    agent: String,
-}
-
-#[derive(Serialize)]
-pub struct CreateSessionResponse {
-    session_id: String,
-    agent: String,
-    status: String,
-    created_at: String,
-}
-
-#[derive(Serialize)]
-pub struct GetSessionResponse {
-    session_id: String,
-    agent: String,
-    status: String,
-    created_at: String,
-    updated_at: String,
-}
-
-#[derive(Deserialize)]
-pub struct SendMessageRequest {
-    content: String,
-}
-
-#[derive(Serialize)]
-pub struct SendMessageResponse {
-    message_id: String,
-    role: String,
-    content: String,
+pub struct GetMessagesQuery {
+    limit: Option<u32>,
 }
 
 // ============================================================================
 // Handlers
 // ============================================================================
 
+/// GET /api/v1/sessions
+pub async fn list_sessions(State(state): State<AppState>) -> Json<ListSessionsResponse> {
+    let sessions: Vec<SessionSummary> = state
+        .sessions
+        .list()
+        .await
+        .into_iter()
+        .map(|s| SessionSummary {
+            session_id: s.id,
+            agent: s.agent,
+            status: s.status,
+            created_at: s.created_at.to_rfc3339(),
+        })
+        .collect();
+
+    Json(ListSessionsResponse { sessions })
+}
+
 /// POST /api/v1/sessions
 pub async fn create_session(
     State(state): State<AppState>,
     Json(req): Json<CreateSessionRequest>,
-) -> Response {
-    if state.agents.get(&req.agent).is_none() {
-        return response::not_found(format!("Agent '{}' not found", req.agent)).into_response();
+) -> impl IntoResponse {
+    let Some(agent_spec) = state.agents.get(&req.agent) else {
+        return problem_details::not_found(format!("agent '{}' not found", req.agent))
+            .into_response();
+    };
+
+    let session = state.sessions.create(&req.agent).await;
+    let ctx = SessionContext {
+        sessions: &state.sessions,
+        sessions_path: &state.sessions_path,
+        session_id: &session.id,
+        agent: &session.agent,
+        created_at: session.created_at,
+        status: SessionStatus::Active,
+        on_disconnect: agent_spec.session.on_disconnect,
+    };
+    if let Err(e) = commit_event(
+        &ctx,
+        SessionEventPayload::SessionStart {
+            session_id: session.id.clone(),
+            agent: session.agent.clone(),
+        },
+    )
+    .await
+    {
+        return problem_details::internal_error(format!("failed to persist session: {}", e))
+            .into_response();
     }
 
-    let session = state.sessions.create(req.agent).await;
-
     let response = CreateSessionResponse {
-        session_id: session.id,
-        agent: session.agent,
-        status: session.status.to_string(),
+        session_id: session.id.clone(),
+        agent: session.agent.clone(),
+        status: session.status,
         created_at: session.created_at.to_rfc3339(),
     };
 
@@ -83,39 +104,68 @@ pub async fn create_session(
 /// GET /api/v1/sessions/{session_id}
 pub async fn get_session(
     State(state): State<AppState>,
-    Path(session_id): Path<String>,
-) -> Response {
+    PathExtract(session_id): PathExtract<String>,
+) -> impl IntoResponse {
     let Some(session) = state.sessions.get(&session_id).await else {
-        return response::not_found("Session not found").into_response();
+        return problem_details::not_found("session not found").into_response();
     };
 
     let response = GetSessionResponse {
-        session_id: session.id,
-        agent: session.agent,
-        status: session.status.to_string(),
+        session_id: session.id.clone(),
+        agent: session.agent.clone(),
+        status: session.status,
         created_at: session.created_at.to_rfc3339(),
-        updated_at: session.updated_at.to_rfc3339(),
+        updated_at: Some(session.updated_at.to_rfc3339()),
     };
 
     (StatusCode::OK, Json(response)).into_response()
 }
 
+/// GET /api/v1/sessions/{session_id}/messages
+pub async fn get_messages(
+    State(state): State<AppState>,
+    PathExtract(session_id): PathExtract<String>,
+    Query(query): Query<GetMessagesQuery>,
+) -> impl IntoResponse {
+    // First check if session exists
+    if state.sessions.get(&session_id).await.is_none() {
+        return problem_details::not_found("session not found").into_response();
+    }
+
+    let messages = state
+        .sessions
+        .get_messages(&session_id)
+        .await
+        .unwrap_or_default();
+
+    let iter = messages.into_iter().map(|m| MessageResponse {
+        role: m.role.to_string(),
+        content: m.content,
+    });
+    let messages: Vec<_> = match query.limit {
+        Some(limit) => iter.take(limit as usize).collect(),
+        None => iter.collect(),
+    };
+
+    (StatusCode::OK, Json(GetMessagesResponse { messages })).into_response()
+}
+
 /// POST /api/v1/sessions/{session_id}/messages
 pub async fn send_message(
     State(state): State<AppState>,
-    Path(session_id): Path<String>,
+    PathExtract(session_id): PathExtract<String>,
     Json(req): Json<SendMessageRequest>,
-) -> Response {
-    let (chat_request, provider) =
-        match prepare_chat_context(&state, &session_id, req.content).await {
-            Ok(ctx) => ctx,
-            Err(resp) => return resp,
-        };
+) -> impl IntoResponse {
+    let ctx = match prepare_chat_context(&state, &session_id, req.content).await {
+        Ok(ctx) => ctx,
+        Err(e) => return e.into_response(),
+    };
 
-    let chat_response = match provider.chat(chat_request).await {
+    let chat_response = match ctx.provider.chat(ctx.request).await {
         Ok(resp) => resp,
         Err(e) => {
-            return response::internal_error(format!("LLM request failed: {}", e)).into_response();
+            return problem_details::internal_error(format!("llm request failed: {}", e))
+                .into_response();
         }
     };
 
@@ -125,17 +175,29 @@ pub async fn send_message(
         .map(|c| c.message.content.clone())
         .unwrap_or_default();
 
-    let assistant_message = Message {
-        role: Role::Assistant,
-        content: assistant_content.clone(),
-    };
-    let _ = state
-        .sessions
-        .add_message(&session_id, assistant_message)
-        .await;
+    // Persist assistant message to store and event log
+    if let Err(e) = persist_assistant_message(
+        &state.sessions,
+        &state.sessions_path,
+        &session_id,
+        assistant_content.clone(),
+        chat_response.usage.clone(),
+    )
+    .await
+    {
+        return problem_details::internal_error(format!(
+            "failed to persist assistant message: {}",
+            e
+        ))
+        .into_response();
+    }
 
     let response = SendMessageResponse {
-        message_id: format!("msg_{}", Uuid::new_v4().simple()),
+        message_id: format!(
+            "{}{}",
+            crate::api::MESSAGE_ID_PREFIX,
+            Uuid::new_v4().simple()
+        ),
         role: "assistant".to_string(),
         content: assistant_content,
     };
@@ -153,33 +215,66 @@ pub async fn send_message(
 /// - `start`: `{}` — signals streaming has begun
 /// - `token`: `{"content": "..."}` — streamed content chunks
 /// - `done`: `{"message_id": "msg_...", "usage": {...}}` — stream complete with message ID
+/// - `cancelled`: `{}` — stream was cancelled (client disconnected)
 /// - `error`: `{"message": "..."}` — on error (timeout, LLM failure)
+///
+/// Cancellation behavior:
+/// - When the client disconnects, the in-flight LLM request is cancelled
+/// - Any accumulated content is saved to the session
+/// - If agent has `on_disconnect: pause`, session is paused and snapshot is written
+/// - If agent has `on_disconnect: continue`, LLM continues in background, events are logged
 pub async fn stream_session(
     State(state): State<AppState>,
-    Path(session_id): Path<String>,
+    PathExtract(session_id): PathExtract<String>,
     Json(req): Json<SendMessageRequest>,
-) -> Response {
-    let (chat_request, provider) =
-        match prepare_chat_context(&state, &session_id, req.content).await {
-            Ok(ctx) => ctx,
-            Err(resp) => return resp,
-        };
+) -> impl IntoResponse {
+    let ctx = match prepare_chat_context(&state, &session_id, req.content).await {
+        Ok(ctx) => ctx,
+        Err(e) => return e.into_response(),
+    };
 
-    let stream = match provider.chat_stream(chat_request).await {
+    // Get session info for snapshot (we need created_at and agent)
+    let session = match state.sessions.get(&session_id).await {
+        Some(s) => s,
+        None => return problem_details::not_found("session not found").into_response(),
+    };
+
+    let stream = match ctx.provider.chat_stream(ctx.request).await {
         Ok(s) => s,
         Err(e) => {
-            return response::internal_error(format!("LLM request failed: {}", e)).into_response();
+            return problem_details::internal_error(format!("llm request failed: {}", e))
+                .into_response();
         }
     };
 
-    let message_id = format!("msg_{}", Uuid::new_v4().simple());
+    let message_id = format!(
+        "{}{}",
+        crate::api::MESSAGE_ID_PREFIX,
+        Uuid::new_v4().simple()
+    );
+    let cancel_token = CancellationToken::new();
+
+    debug!(
+        session_id = %session_id,
+        message_id = %message_id,
+        on_disconnect = ?ctx.on_disconnect,
+        "Starting SSE stream"
+    );
 
     let sse_stream = AccumulatingStream::new(
         stream,
-        state.sessions.clone(),
-        session_id,
-        message_id,
-        Duration::from_secs(state.idle_timeout_seconds),
+        StreamConfig {
+            sessions: state.sessions.clone(),
+            session_id,
+            agent: session.agent.clone(),
+            created_at: session.created_at,
+            message_id,
+            idle_timeout: Duration::from_secs(state.idle_timeout_seconds),
+            cancel_token,
+            on_disconnect: ctx.on_disconnect,
+            sessions_path: state.sessions_path.clone(),
+            background_tasks: state.background_tasks.clone(),
+        },
     );
 
     let keep_alive = KeepAlive::new()
@@ -190,28 +285,64 @@ pub async fn stream_session(
 }
 
 // ============================================================================
-// Helpers
+// Implementation Details
 // ============================================================================
+
+/// Errors that can occur when sending a message.
+#[derive(Debug)]
+enum SendMessageError {
+    SessionNotFound,
+    AgentNotFound,
+    MessageAddFailed,
+    PersistFailed(String),
+    ProviderNotConfigured(String),
+}
+
+impl IntoResponse for SendMessageError {
+    fn into_response(self) -> Response {
+        match self {
+            Self::SessionNotFound => problem_details::not_found("session not found"),
+            Self::AgentNotFound => {
+                problem_details::internal_error("session references non-existent agent")
+            }
+            Self::MessageAddFailed => {
+                problem_details::internal_error("failed to add message to session")
+            }
+            Self::PersistFailed(msg) => problem_details::internal_error(msg),
+            Self::ProviderNotConfigured(provider) => problem_details::internal_error(format!(
+                "provider '{}' not configured, check API key environment variable",
+                provider
+            )),
+        }
+        .into_response()
+    }
+}
+
+/// Prepared context for LLM chat, including request, provider, and agent config.
+struct ChatContext {
+    request: ChatRequest,
+    provider: Arc<dyn LLMProvider>,
+    on_disconnect: OnDisconnect,
+}
 
 /// Prepare chat context for LLM request.
 ///
 /// Validates session and agent, adds user message, builds system prompt and history,
-/// and returns the ChatRequest with the provider.
+/// and returns the ChatRequest with the provider and agent configuration.
 async fn prepare_chat_context(
     state: &AppState,
     session_id: &str,
     user_content: String,
-) -> Result<(ChatRequest, Arc<dyn LLMProvider>), Response> {
+) -> Result<ChatContext, SendMessageError> {
     let Some(session) = state.sessions.get(session_id).await else {
-        return Err(response::not_found("Session not found").into_response());
+        return Err(SendMessageError::SessionNotFound);
     };
 
     let Some(agent) = state.agents.get(&session.agent) else {
-        return Err(
-            response::internal_error("Session references non-existent agent").into_response(),
-        );
+        return Err(SendMessageError::AgentNotFound);
     };
 
+    let content_for_event = user_content.clone();
     let user_message = Message {
         role: Role::User,
         content: user_content,
@@ -220,238 +351,54 @@ async fn prepare_chat_context(
         .sessions
         .add_message(session_id, user_message)
         .await
-        .is_none()
+        .is_err()
     {
-        return Err(response::internal_error("Failed to add message to session").into_response());
+        return Err(SendMessageError::MessageAddFailed);
     }
 
-    // Build messages for LLM request
-    let mut messages = Vec::new();
-
-    // Build system message from system_prompt and instructions
-    let mut system_content = String::new();
-    if let Some(ref prompt) = agent.system_prompt {
-        system_content.push_str(prompt);
-    }
-    if let Some(ref instructions) = agent.instructions {
-        if !system_content.is_empty() {
-            system_content.push_str("\n\n");
-        }
-        system_content.push_str(instructions);
-    }
-    if !system_content.is_empty() {
-        messages.push(Message {
-            role: Role::System,
-            content: system_content,
-        });
+    if let Err(e) = record_event(
+        &state.sessions,
+        &state.sessions_path,
+        session_id,
+        SessionEventPayload::UserMessage {
+            content: content_for_event,
+        },
+    )
+    .await
+    {
+        return Err(SendMessageError::PersistFailed(format!(
+            "Failed to persist user message: {}",
+            e
+        )));
     }
 
-    if let Some(history) = state.sessions.get_messages(session_id).await {
-        messages.extend(history);
-    }
+    let history = state
+        .sessions
+        .get_messages(session_id)
+        .await
+        .unwrap_or_default();
+    let system_message = build_system_message(agent);
 
     let Some(provider) = state
         .providers
         .get(&agent.model.provider, agent.model.base_url.as_deref())
     else {
-        return Err(response::internal_error(format!(
-            "Provider '{}' not configured. Check API key environment variable.",
-            agent.model.provider
-        ))
-        .into_response());
+        return Err(SendMessageError::ProviderNotConfigured(
+            agent.model.provider.to_string(),
+        ));
     };
 
-    let chat_request = ChatRequest {
-        model: agent.model.name.clone(),
-        messages,
-        temperature: agent.model.temperature,
-        max_tokens: agent.model.max_output_tokens,
-    };
+    let chat_request = build_chat_request(
+        &agent.model.name,
+        system_message.as_deref(),
+        &history,
+        agent.model.temperature,
+        agent.model.max_output_tokens,
+    );
 
-    Ok((chat_request, provider))
-}
-
-// ============================================================================
-// SSE Streaming
-// ============================================================================
-
-// --- SSE Event Data Types ---
-
-#[derive(Serialize)]
-struct TokenData {
-    content: String,
-}
-
-#[derive(Serialize)]
-struct DoneData {
-    message_id: String,
-    usage: Option<crate::llm::Usage>,
-}
-
-#[derive(Serialize)]
-struct ErrorData {
-    message: String,
-}
-
-// --- Stream Types ---
-
-/// Unified error type for streaming, flattening nested Results.
-enum StreamError {
-    Llm(crate::llm::LLMError),
-    Timeout,
-}
-
-/// Inner stream type that flattens `Result<Result<T, LLMError>, Elapsed>` into `Result<T, StreamError>`.
-type FlattenedLLMStream =
-    std::pin::Pin<Box<dyn futures::Stream<Item = Result<StreamEvent, StreamError>> + Send>>;
-
-// --- AccumulatingStream ---
-
-/// A stream wrapper that accumulates token content and stores the assistant message when done.
-///
-/// Features:
-/// - Idle timeout via `tokio_stream::StreamExt::timeout()`
-/// - Drop safety: saves partial messages if the connection aborts
-/// - Emits `start` event before streaming, `done` event with message ID when complete
-struct AccumulatingStream {
-    inner: FlattenedLLMStream,
-    message_id: String,
-    accumulated: String,
-    sessions: crate::session::SessionStore,
-    session_id: String,
-    started: bool,
-    finished: bool,
-}
-
-impl AccumulatingStream {
-    fn new(
-        inner: crate::llm::ChatStream,
-        sessions: crate::session::SessionStore,
-        session_id: String,
-        message_id: String,
-        idle_timeout: Duration,
-    ) -> Self {
-        // Wrap the inner stream with timeout and flatten the nested Results
-        let timed_stream = inner.timeout(idle_timeout);
-        let flattened = tokio_stream::StreamExt::map(timed_stream, |result| match result {
-            Ok(Ok(event)) => Ok(event),
-            Ok(Err(llm_err)) => Err(StreamError::Llm(llm_err)),
-            Err(_elapsed) => Err(StreamError::Timeout),
-        });
-
-        Self {
-            inner: Box::pin(flattened),
-            message_id,
-            accumulated: String::new(),
-            sessions,
-            session_id,
-            started: false,
-            finished: false,
-        }
-    }
-
-    /// Save accumulated content as assistant message.
-    fn save_accumulated(&mut self) {
-        if !self.accumulated.is_empty() {
-            let sessions = self.sessions.clone();
-            let session_id = self.session_id.clone();
-            let content = std::mem::take(&mut self.accumulated);
-
-            tokio::spawn(async move {
-                let assistant_message = Message {
-                    role: Role::Assistant,
-                    content,
-                };
-                let _ = sessions.add_message(&session_id, assistant_message).await;
-            });
-        }
-    }
-}
-
-impl Drop for AccumulatingStream {
-    fn drop(&mut self) {
-        // If stream wasn't finished normally but has accumulated content,
-        // the connection likely dropped. Save what we have.
-        if !self.finished && !self.accumulated.is_empty() {
-            self.save_accumulated();
-        }
-    }
-}
-
-impl futures::Stream for AccumulatingStream {
-    type Item = Result<Event, Infallible>;
-
-    fn poll_next(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        use std::task::Poll;
-
-        if self.finished {
-            return Poll::Ready(None);
-        }
-
-        // Emit start event on first poll
-        if !self.started {
-            self.started = true;
-            let event = Event::default().event("start").data("{}");
-            return Poll::Ready(Some(Ok(event)));
-        }
-
-        match self.inner.as_mut().poll_next(cx) {
-            Poll::Ready(Some(Ok(StreamEvent::Token(content)))) => {
-                self.accumulated.push_str(&content);
-                let event = Event::default()
-                    .event("token")
-                    .json_data(TokenData { content })
-                    .unwrap_or_else(|_| Event::default().event("token").data("{}"));
-                Poll::Ready(Some(Ok(event)))
-            }
-
-            Poll::Ready(Some(Ok(StreamEvent::Done { usage }))) => {
-                self.finished = true;
-                self.save_accumulated();
-                let event = Event::default()
-                    .event("done")
-                    .json_data(DoneData {
-                        message_id: self.message_id.clone(),
-                        usage,
-                    })
-                    .unwrap_or_else(|_| Event::default().event("done").data("{}"));
-                Poll::Ready(Some(Ok(event)))
-            }
-
-            Poll::Ready(Some(Err(StreamError::Timeout))) => {
-                self.finished = true;
-                self.save_accumulated();
-                let event = Event::default()
-                    .event("error")
-                    .json_data(ErrorData {
-                        message: "Stream idle timeout".to_string(),
-                    })
-                    .unwrap_or_else(|_| Event::default().event("error").data("{}"));
-                Poll::Ready(Some(Ok(event)))
-            }
-
-            Poll::Ready(Some(Err(StreamError::Llm(e)))) => {
-                self.finished = true;
-                self.save_accumulated();
-                let event = Event::default()
-                    .event("error")
-                    .json_data(ErrorData {
-                        message: e.to_string(),
-                    })
-                    .unwrap_or_else(|_| Event::default().event("error").data("{}"));
-                Poll::Ready(Some(Ok(event)))
-            }
-
-            Poll::Ready(None) => {
-                self.finished = true;
-                self.save_accumulated();
-                Poll::Ready(None)
-            }
-
-            Poll::Pending => Poll::Pending,
-        }
-    }
+    Ok(ChatContext {
+        request: chat_request,
+        provider,
+        on_disconnect: agent.session.on_disconnect,
+    })
 }

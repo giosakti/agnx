@@ -1,10 +1,11 @@
 //! HTTP request handlers.
 
-mod example_error;
+mod admin;
 mod health;
+pub(crate) mod problem_details;
 pub mod v1;
 mod version;
 
-pub use example_error::{example_bad_request, example_internal_error, example_not_found};
+pub use admin::shutdown;
 pub use health::{livez, readyz};
 pub use version::version;

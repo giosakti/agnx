@@ -1,69 +1,18 @@
-use crate::response;
-use crate::server::AppState;
+//! Agent management HTTP handlers.
+
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
-use serde::Serialize;
-use std::collections::HashMap;
+use axum::response::IntoResponse;
 
-#[derive(Serialize)]
-pub struct AgentsResponse {
-    agents: Vec<AgentSummary>,
-}
+use crate::api::{
+    AgentDetailResponse, AgentMetadataResponse, AgentModelResponse, AgentSpecResponse,
+    AgentSummary, ListAgentsResponse,
+};
+use crate::handlers::problem_details;
+use crate::server::AppState;
 
-#[derive(Serialize)]
-pub struct AgentSummary {
-    name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    version: Option<String>,
-}
-
-#[derive(Serialize)]
-pub struct AgentDetailResponse {
-    api_version: String,
-    kind: String,
-    metadata: MetadataResponse,
-    spec: SpecResponse,
-}
-
-#[derive(Serialize)]
-pub struct MetadataResponse {
-    name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    version: Option<String>,
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    labels: HashMap<String, String>,
-}
-
-#[derive(Serialize)]
-pub struct SpecResponse {
-    model: ModelResponse,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    system_prompt: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    instructions: Option<String>,
-}
-
-#[derive(Serialize)]
-pub struct ModelResponse {
-    provider: String,
-    name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_input_tokens: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_output_tokens: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    base_url: Option<String>,
-}
-
-pub async fn list_agents(State(state): State<AppState>) -> Json<AgentsResponse> {
+pub async fn list_agents(State(state): State<AppState>) -> Json<ListAgentsResponse> {
     let agents: Vec<AgentSummary> = state
         .agents
         .iter()
@@ -74,25 +23,28 @@ pub async fn list_agents(State(state): State<AppState>) -> Json<AgentsResponse> 
         })
         .collect();
 
-    Json(AgentsResponse { agents })
+    Json(ListAgentsResponse { agents })
 }
 
-pub async fn get_agent(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+pub async fn get_agent(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
     let Some(agent) = state.agents.get(&name) else {
-        return response::not_found(format!("Agent '{name}' not found")).into_response();
+        return problem_details::not_found(format!("agent '{name}' not found")).into_response();
     };
 
     let response = AgentDetailResponse {
         api_version: agent.api_version.clone(),
         kind: agent.kind.clone(),
-        metadata: MetadataResponse {
+        metadata: AgentMetadataResponse {
             name: agent.metadata.name.clone(),
             description: agent.metadata.description.clone(),
             version: agent.metadata.version.clone(),
             labels: agent.metadata.labels.clone(),
         },
-        spec: SpecResponse {
-            model: ModelResponse {
+        spec: AgentSpecResponse {
+            model: AgentModelResponse {
                 provider: agent.model.provider.to_string(),
                 name: agent.model.name.clone(),
                 temperature: agent.model.temperature,
