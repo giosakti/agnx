@@ -9,11 +9,13 @@ mod common;
 
 use common::test_app;
 
-// --- Health endpoints ---
+// ============================================================================
+// Health Endpoints
+// ============================================================================
 
 #[tokio::test]
 async fn test_livez() {
-    let app = test_app();
+    let app = test_app().await;
 
     let response = app
         .oneshot(Request::get("/livez").body(Body::empty()).unwrap())
@@ -28,7 +30,7 @@ async fn test_livez() {
 
 #[tokio::test]
 async fn test_readyz() {
-    let app = test_app();
+    let app = test_app().await;
 
     let response = app
         .oneshot(Request::get("/readyz").body(Body::empty()).unwrap())
@@ -43,7 +45,7 @@ async fn test_readyz() {
 
 #[tokio::test]
 async fn test_version() {
-    let app = test_app();
+    let app = test_app().await;
 
     let response = app
         .oneshot(Request::get("/version").body(Body::empty()).unwrap())
@@ -58,11 +60,13 @@ async fn test_version() {
     assert!(json.get("version").is_some());
 }
 
-// --- Agents API ---
+// ============================================================================
+// Agents API
+// ============================================================================
 
 #[tokio::test]
 async fn test_list_agents_empty() {
-    let app = test_app();
+    let app = test_app().await;
 
     let response = app
         .oneshot(Request::get("/api/v1/agents").body(Body::empty()).unwrap())
@@ -79,7 +83,7 @@ async fn test_list_agents_empty() {
 
 #[tokio::test]
 async fn test_get_agent_not_found() {
-    let app = test_app();
+    let app = test_app().await;
 
     let response = app
         .oneshot(
@@ -99,11 +103,13 @@ async fn test_get_agent_not_found() {
     assert!(json["detail"].as_str().unwrap().contains("not found"));
 }
 
-// --- Sessions API ---
+// ============================================================================
+// Sessions API
+// ============================================================================
 
 #[tokio::test]
 async fn test_create_session_agent_not_found() {
-    let app = test_app();
+    let app = test_app().await;
 
     let response = app
         .oneshot(
@@ -126,7 +132,7 @@ async fn test_create_session_agent_not_found() {
 
 #[tokio::test]
 async fn test_get_session_not_found() {
-    let app = test_app();
+    let app = test_app().await;
 
     let response = app
         .oneshot(
@@ -147,7 +153,7 @@ async fn test_get_session_not_found() {
 
 #[tokio::test]
 async fn test_stream_session_not_found() {
-    let app = test_app();
+    let app = test_app().await;
 
     let response = app
         .oneshot(
@@ -167,11 +173,13 @@ async fn test_stream_session_not_found() {
     assert_eq!(json["status"], 404);
 }
 
-// --- Error responses ---
+// ============================================================================
+// Error Responses
+// ============================================================================
 
 #[tokio::test]
 async fn test_problem_details_format() {
-    let app = test_app();
+    let app = test_app().await;
 
     let response = app
         .oneshot(
