@@ -1,3 +1,5 @@
+//! Agent error types.
+
 use thiserror::Error;
 
 /// Error type for agent loading operations.

@@ -1,13 +1,18 @@
 //! AAF agent specification parsing.
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
+use tokio::fs;
+
 use super::error::{AgentLoadError, AgentLoadWarning};
-use super::provider::Provider;
 use super::{API_VERSION_V1ALPHA1, KIND_AGENT};
+use crate::llm::Provider;
+
+// ============================================================================
+// Public Types
+// ============================================================================
 
 /// An agent specification loaded from an agent.yaml file.
 #[derive(Debug, Clone)]
@@ -71,32 +76,17 @@ pub struct ModelConfig {
     pub base_url: Option<String>,
 }
 
-/// Raw YAML structure for parsing agent.yaml files.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RawAgentSpec {
-    api_version: String,
-    kind: String,
-    metadata: AgentMetadata,
-    spec: RawAgentSpecBody,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawAgentSpecBody {
-    model: ModelConfig,
-    system_prompt: Option<String>,
-    instructions: Option<String>,
-    #[serde(default)]
-    session: AgentSessionConfig,
-}
+// ============================================================================
+// AgentSpec Implementation
+// ============================================================================
 
 impl AgentSpec {
     /// Load an agent and return non-fatal warnings (e.g., missing referenced markdown files).
-    pub fn load_with_warnings(
+    pub async fn load_with_warnings(
         agent_dir: &Path,
     ) -> Result<(Self, Vec<AgentLoadWarning>), AgentLoadError> {
         let yaml_path = agent_dir.join("agent.yaml");
-        let yaml_content = fs::read_to_string(&yaml_path)?;
+        let yaml_content = fs::read_to_string(&yaml_path).await?;
 
         let raw: RawAgentSpec =
             serde_saphyr::from_str(&yaml_content).map_err(AgentLoadError::Yaml)?;
@@ -119,43 +109,23 @@ impl AgentSpec {
 
         let mut warnings = Vec::new();
 
-        // Load system_prompt markdown if specified
-        let system_prompt = if let Some(ref path) = raw.spec.system_prompt {
-            let full_path = agent_dir.join(path);
-            match fs::read_to_string(&full_path) {
-                Ok(content) => Some(content),
-                Err(e) => {
-                    warnings.push(AgentLoadWarning::MissingFile {
-                        agent: raw.metadata.name.clone(),
-                        field: "system_prompt",
-                        path: full_path,
-                        error: e.to_string(),
-                    });
-                    None
-                }
-            }
-        } else {
-            None
-        };
+        let system_prompt = load_optional_file(
+            agent_dir,
+            raw.spec.system_prompt.as_deref(),
+            &raw.metadata.name,
+            "system_prompt",
+            &mut warnings,
+        )
+        .await;
 
-        // Load instructions markdown if specified
-        let instructions = if let Some(ref path) = raw.spec.instructions {
-            let full_path = agent_dir.join(path);
-            match fs::read_to_string(&full_path) {
-                Ok(content) => Some(content),
-                Err(e) => {
-                    warnings.push(AgentLoadWarning::MissingFile {
-                        agent: raw.metadata.name.clone(),
-                        field: "instructions",
-                        path: full_path,
-                        error: e.to_string(),
-                    });
-                    None
-                }
-            }
-        } else {
-            None
-        };
+        let instructions = load_optional_file(
+            agent_dir,
+            raw.spec.instructions.as_deref(),
+            &raw.metadata.name,
+            "instructions",
+            &mut warnings,
+        )
+        .await;
 
         Ok((
             AgentSpec {
@@ -172,20 +142,68 @@ impl AgentSpec {
     }
 }
 
+// ============================================================================
+// Implementation Details
+// ============================================================================
+
+/// Raw YAML structure for parsing agent.yaml files.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawAgentSpec {
+    api_version: String,
+    kind: String,
+    metadata: AgentMetadata,
+    spec: RawAgentSpecBody,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawAgentSpecBody {
+    model: ModelConfig,
+    system_prompt: Option<String>,
+    instructions: Option<String>,
+    #[serde(default)]
+    session: AgentSessionConfig,
+}
+
+/// Load optional file content, recording a warning if file cannot be read.
+async fn load_optional_file(
+    agent_dir: &Path,
+    path: Option<&str>,
+    agent_name: &str,
+    field: &'static str,
+    warnings: &mut Vec<AgentLoadWarning>,
+) -> Option<String> {
+    let path = path?;
+    let full_path = agent_dir.join(path);
+
+    match fs::read_to_string(&full_path).await {
+        Ok(content) => Some(content),
+        Err(e) => {
+            warnings.push(AgentLoadWarning::MissingFile {
+                agent: agent_name.to_string(),
+                field,
+                path: full_path,
+                error: e.to_string(),
+            });
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
 
     fn write_yaml(dir: &Path, contents: &str) {
-        fs::write(dir.join("agent.yaml"), contents).unwrap();
+        std::fs::write(dir.join("agent.yaml"), contents).unwrap();
     }
 
-    #[test]
-    fn load_minimal_agent() {
+    #[tokio::test]
+    async fn load_minimal_agent() {
         let tmp = TempDir::new().unwrap();
         let agent_dir = tmp.path().join("test-agent");
-        fs::create_dir(&agent_dir).unwrap();
+        std::fs::create_dir(&agent_dir).unwrap();
 
         write_yaml(
             &agent_dir,
@@ -200,7 +218,7 @@ spec:
 "#,
         );
 
-        let (agent, warnings) = AgentSpec::load_with_warnings(&agent_dir).unwrap();
+        let (agent, warnings) = AgentSpec::load_with_warnings(&agent_dir).await.unwrap();
         assert!(warnings.is_empty());
         assert_eq!(agent.api_version, API_VERSION_V1ALPHA1);
         assert_eq!(agent.kind, KIND_AGENT);
@@ -211,11 +229,11 @@ spec:
         assert!(agent.instructions.is_none());
     }
 
-    #[test]
-    fn load_agent_with_system_prompt() {
+    #[tokio::test]
+    async fn load_agent_with_system_prompt() {
         let tmp = TempDir::new().unwrap();
         let agent_dir = tmp.path().join("test-agent");
-        fs::create_dir(&agent_dir).unwrap();
+        std::fs::create_dir(&agent_dir).unwrap();
 
         write_yaml(
             &agent_dir,
@@ -232,13 +250,13 @@ spec:
   system_prompt: ./SYSTEM_PROMPT.md
 "#,
         );
-        fs::write(
+        std::fs::write(
             agent_dir.join("SYSTEM_PROMPT.md"),
             "You are a helpful assistant.",
         )
         .unwrap();
 
-        let (agent, _) = AgentSpec::load_with_warnings(&agent_dir).unwrap();
+        let (agent, _) = AgentSpec::load_with_warnings(&agent_dir).await.unwrap();
         assert_eq!(agent.metadata.name, "test-agent");
         assert_eq!(agent.metadata.description, Some("A test agent".to_string()));
         assert_eq!(agent.metadata.version, Some("1.0.0".to_string()));
@@ -248,11 +266,11 @@ spec:
         );
     }
 
-    #[test]
-    fn load_agent_missing_system_prompt_is_warning_not_error() {
+    #[tokio::test]
+    async fn load_agent_missing_system_prompt_is_warning_not_error() {
         let tmp = TempDir::new().unwrap();
         let agent_dir = tmp.path().join("test-agent");
-        fs::create_dir(&agent_dir).unwrap();
+        std::fs::create_dir(&agent_dir).unwrap();
 
         write_yaml(
             &agent_dir,
@@ -268,16 +286,16 @@ spec:
 "#,
         );
 
-        let (agent, warnings) = AgentSpec::load_with_warnings(&agent_dir).unwrap();
+        let (agent, warnings) = AgentSpec::load_with_warnings(&agent_dir).await.unwrap();
         assert!(agent.system_prompt.is_none());
         assert_eq!(warnings.len(), 1);
     }
 
-    #[test]
-    fn load_agent_invalid_api_version() {
+    #[tokio::test]
+    async fn load_agent_invalid_api_version() {
         let tmp = TempDir::new().unwrap();
         let agent_dir = tmp.path().join("test-agent");
-        fs::create_dir(&agent_dir).unwrap();
+        std::fs::create_dir(&agent_dir).unwrap();
 
         write_yaml(
             &agent_dir,
@@ -292,15 +310,15 @@ spec:
 "#,
         );
 
-        let err = AgentSpec::load_with_warnings(&agent_dir).unwrap_err();
+        let err = AgentSpec::load_with_warnings(&agent_dir).await.unwrap_err();
         assert!(matches!(err, AgentLoadError::Validation(_)));
     }
 
-    #[test]
-    fn load_agent_with_all_model_options() {
+    #[tokio::test]
+    async fn load_agent_with_all_model_options() {
         let tmp = TempDir::new().unwrap();
         let agent_dir = tmp.path().join("test-agent");
-        fs::create_dir(&agent_dir).unwrap();
+        std::fs::create_dir(&agent_dir).unwrap();
 
         write_yaml(
             &agent_dir,
@@ -321,7 +339,7 @@ spec:
 "#,
         );
 
-        let (agent, _) = AgentSpec::load_with_warnings(&agent_dir).unwrap();
+        let (agent, _) = AgentSpec::load_with_warnings(&agent_dir).await.unwrap();
         assert_eq!(agent.model.provider, Provider::OpenRouter);
         assert_eq!(agent.model.temperature, Some(0.7));
         assert_eq!(agent.model.max_output_tokens, Some(4096));
@@ -339,11 +357,11 @@ spec:
         );
     }
 
-    #[test]
-    fn load_agent_with_session_config() {
+    #[tokio::test]
+    async fn load_agent_with_session_config() {
         let tmp = TempDir::new().unwrap();
         let agent_dir = tmp.path().join("test-agent");
-        fs::create_dir(&agent_dir).unwrap();
+        std::fs::create_dir(&agent_dir).unwrap();
 
         write_yaml(
             &agent_dir,
@@ -360,16 +378,16 @@ spec:
 "#,
         );
 
-        let (agent, warnings) = AgentSpec::load_with_warnings(&agent_dir).unwrap();
+        let (agent, warnings) = AgentSpec::load_with_warnings(&agent_dir).await.unwrap();
         assert!(warnings.is_empty());
         assert_eq!(agent.session.on_disconnect, OnDisconnect::Continue);
     }
 
-    #[test]
-    fn load_agent_session_defaults_to_pause() {
+    #[tokio::test]
+    async fn load_agent_session_defaults_to_pause() {
         let tmp = TempDir::new().unwrap();
         let agent_dir = tmp.path().join("test-agent");
-        fs::create_dir(&agent_dir).unwrap();
+        std::fs::create_dir(&agent_dir).unwrap();
 
         write_yaml(
             &agent_dir,
@@ -384,7 +402,7 @@ spec:
 "#,
         );
 
-        let (agent, _) = AgentSpec::load_with_warnings(&agent_dir).unwrap();
+        let (agent, _) = AgentSpec::load_with_warnings(&agent_dir).await.unwrap();
         assert_eq!(agent.session.on_disconnect, OnDisconnect::Pause);
     }
 

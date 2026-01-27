@@ -7,10 +7,8 @@ pub const API_VERSION_V1ALPHA1: &str = "agnx/v1alpha1";
 pub const KIND_AGENT: &str = "Agent";
 
 mod error;
-mod provider;
 mod spec;
 mod store;
 
-pub use provider::Provider;
-pub use spec::{AgentSessionConfig, OnDisconnect};
+pub use spec::{AgentMetadata, AgentSessionConfig, AgentSpec, ModelConfig, OnDisconnect};
 pub use store::{AgentStore, log_scan_warnings, resolve_agents_dir};
