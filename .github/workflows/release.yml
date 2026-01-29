@@ -22,10 +22,10 @@ jobs:
             os: ubuntu-latest
             archive: tar.gz
           - target: x86_64-apple-darwin
-            os: macos-13  # Intel runner
+            os: macos-15-intel  # Intel runner (until Fall 2027)
             archive: tar.gz
           - target: aarch64-apple-darwin
-            os: macos-latest  # ARM runner
+            os: macos-latest  # ARM runner (macos-15-arm64)
             archive: tar.gz
 
     steps:
