@@ -24,7 +24,7 @@ For full workflow details: `bd prime`
 - **Transparent state** — agent specs, memories, and sessions are human-readable files you can inspect, version, and export
 - **Sandboxed by default** — bubblewrap on Linux; Docker or trust mode on other platforms
 - **Pluggable everything** — file-based by default; bring your own storage or messaging backends
-- **Edge-ready** — single-binary core (~10MB), gateway plugins are optional separate binaries
+- **Edge-ready** — single-binary core (~10-15MB), gateway plugins are optional separate binaries
 
 Core protocols built-in (CLI, HTTP, SSE). Platform integrations via plugins.
 

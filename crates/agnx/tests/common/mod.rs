@@ -9,6 +9,7 @@ use agnx::agent::AgentStore;
 use agnx::background::BackgroundTasks;
 use agnx::gateway::GatewayManager;
 use agnx::llm::ProviderRegistry;
+use agnx::sandbox::TrustSandbox;
 use agnx::server::{self, AppState};
 use agnx::session::SessionStore;
 
@@ -36,6 +37,7 @@ pub async fn test_app() -> Router {
         shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
         admin_token: None,
         gateways: GatewayManager::new(),
+        sandbox: Arc::new(TrustSandbox::new()),
     };
 
     server::build_app(state, 300)

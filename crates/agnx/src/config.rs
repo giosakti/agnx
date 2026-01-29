@@ -23,6 +23,8 @@ pub struct Config {
     /// Global routing rules for agent selection (evaluated in order, first match wins).
     #[serde(default)]
     pub routes: Vec<RouteConfig>,
+    #[serde(default)]
+    pub sandbox: SandboxConfig,
 }
 
 #[derive(Debug, Error)]
@@ -48,6 +50,7 @@ impl Default for Config {
             services: ServicesConfig::default(),
             gateways: GatewaysConfig::default(),
             routes: Vec::new(),
+            sandbox: SandboxConfig::default(),
         }
     }
 }
@@ -401,6 +404,26 @@ pub enum RestartPolicy {
 }
 
 // ============================================================================
+// SandboxConfig
+// ============================================================================
+
+/// Sandbox configuration.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct SandboxConfig {
+    /// Sandbox mode: "trust", "bubblewrap", "docker"
+    pub mode: String,
+}
+
+impl Default for SandboxConfig {
+    fn default() -> Self {
+        Self {
+            mode: "trust".to_string(),
+        }
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -423,6 +446,7 @@ mod tests {
         assert_eq!(config.server.idle_timeout_seconds, 60);
         assert_eq!(config.server.keep_alive_interval_seconds, 15);
         assert_eq!(config.agents_dir, PathBuf::from(".agnx/agents"));
+        assert_eq!(config.sandbox.mode, "trust");
         assert_eq!(
             config.services.session.path,
             PathBuf::from(".agnx/sessions")
@@ -673,6 +697,31 @@ gateways:
         assert!(telegram.enabled);
         assert_eq!(telegram.bot_token, "test_token");
         assert!(config.routes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_config() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"
+sandbox:
+  mode: "bubblewrap"
+"#
+        )
+        .unwrap();
+
+        let config = Config::load(file.path().to_str().unwrap()).await.unwrap();
+        assert_eq!(config.sandbox.mode, "bubblewrap");
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_config_default() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "# empty config").unwrap();
+
+        let config = Config::load(file.path().to_str().unwrap()).await.unwrap();
+        assert_eq!(config.sandbox.mode, "trust");
     }
 
     #[tokio::test]

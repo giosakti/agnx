@@ -20,6 +20,7 @@ use agnx::agent::OnDisconnect;
 use agnx::background::BackgroundTasks;
 use agnx::gateway::GatewayManager;
 use agnx::llm::{Message, ProviderRegistry, Role, StreamEvent, Usage};
+use agnx::sandbox::TrustSandbox;
 use agnx::server::{self, AppState};
 use agnx::session::SessionStore;
 
@@ -445,6 +446,7 @@ async fn app_state_with_custom_timeouts() {
         shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
         admin_token: None,
         gateways: GatewayManager::new(),
+        sandbox: Arc::new(TrustSandbox::new()),
     };
 
     // Create an app with the custom state

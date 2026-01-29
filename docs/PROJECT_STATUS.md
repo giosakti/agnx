@@ -3,7 +3,7 @@
 > **Purpose:** Living status + session context. The stable vision and principles live in the [Project Charter](./202601111100.project-charter.md).
 
 ## Last Updated
-2026-01-27
+2026-01-29
 
 ## Strategic Direction
 
@@ -66,16 +66,15 @@ Key specs and design docs:
 - [x] Core gateways: SSE streaming
 
 ### v0.3.0 — Gateway Plugins
-- [ ] Gateway plugin protocol (JSON over stdio)
-- [ ] First-party plugin: agnx-gateway-telegram
-- [ ] First-party plugin: agnx-gateway-whatsapp (Baileys-based)
-- [ ] Plugin configuration in agnx.yaml
+- [x] Gateway plugin protocol (JSON over stdio)
+- [x] First-party plugin: agnx-gateway-telegram
+- [x] Plugin configuration in agnx.yaml
 - [ ] Trust mode (no isolation) — sandbox placeholder
 
 ### v0.4.0 — Tools & Memory
 - [ ] CLI tool support (lightweight alternative to MCP)
 - [ ] MCP tool integration
-- [ ] File-based memory backend
+- [ ] File-based memory bank
 - [ ] Agent export/import
 - [ ] CLI: `agnx export`, `agnx import`
 
@@ -84,10 +83,11 @@ Key specs and design docs:
 - [ ] bubblewrap backend (Linux)
 - [ ] Docker backend (cross-platform fallback)
 
-### v0.6.0 — External Backends
+### v0.6.0 — External Backends & More Gateways
 - [ ] Services: PostgreSQL backend
 - [ ] Services: Redis backend
 - [ ] Services: S3 backend
+- [ ] First-party plugin: agnx-gateway-whatsapp
 
 ### v0.7.0 — Agent Orchestration
 - [ ] Built-in tool: `claude_code_exec` (invoke Claude Code headless)
@@ -118,9 +118,19 @@ Key specs and design docs:
 
 ## Current Focus
 
-**v0.3.0 — Gateway Plugins**: Gateway plugin protocol (JSON over stdio), first-party Telegram plugin.
+**v0.3.0 — Gateway Plugins**: Finishing trust mode (sandbox placeholder).
 
 ## Recent Accomplishments
+
+- **v0.3.0 in progress** — Gateway Plugins
+- Implemented Gateway Protocol (`agnx-gateway-protocol` crate) for external gateway developers
+- Built Telegram gateway (`agnx-gateway-telegram`) supporting both built-in and subprocess modes
+- Refactored to workspace structure (`crates/agnx`, `crates/agnx-gateway-*`)
+- Added Gateway Manager with unified interface for built-in and subprocess gateways
+- Implemented subprocess supervision with restart policies, exponential backoff, and parent death handling
+- Added session routing (gateway + chat_id persisted in snapshots)
+- Added global agent routing rules with match conditions (gateway, chat_type, chat_id, sender_id)
+- Added agent tracking in AssistantMessage events for mid-session agent switching
 
 - **v0.2.0 released** — Sessions & Durability complete
 - Implemented session persistence (JSONL events + YAML snapshots) with atomic writes
@@ -143,9 +153,8 @@ Key specs and design docs:
 
 ## Next Action
 
-- Design gateway plugin protocol (JSON over stdio)
-- Implement gateway plugin manager in agnx core
-- Build first-party plugin: agnx-gateway-telegram
+- Implement trust mode (no isolation) as sandbox placeholder
+- Release v0.3.0
 
 ## Blockers / Known Issues / Decisions Needed
 

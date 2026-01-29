@@ -10,7 +10,7 @@
 - **Transparent state** — agent specs, memories, and sessions are human-readable files you can inspect, version, and export
 - **Sandboxed by default** — bubblewrap on Linux; Docker or trust mode on other platforms
 - **Pluggable everything** — file-based by default; bring your own storage or messaging backends
-- **Edge-ready** — single-binary core (~10MB), gateway plugins are optional separate binaries
+- **Edge-ready** — single-binary core (~10-15MB), gateway plugins are optional separate binaries
 
 Core protocols built-in (CLI, HTTP, SSE). Platform integrations via plugins.
 
@@ -23,7 +23,7 @@ Self-host it directly, or use it as the foundation for agent-powered products.
 | Sessions lost on crash or disconnect | **Durable sessions** — attach/detach like tmux, resume where you left off |
 | Agent definitions locked in proprietary formats | **Portable YAML + Markdown** — version control, inspect, migrate anywhere |
 | Hidden runtime state you can't access | **File-based by default** — sessions, memory, artifacts are just files |
-| Heavy frameworks with complex setup | **Single binary, <5MB** — starts in milliseconds |
+| Heavy frameworks with complex setup | **Single binary, ~10-15MB** — starts in milliseconds |
 | Vendor lock-in to specific LLM providers | **LLM-agnostic** — OpenRouter, OpenAI, Anthropic, Ollama |
 
 ## Installation
