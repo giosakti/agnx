@@ -4,27 +4,41 @@
 [![Rust](https://img.shields.io/badge/rust-1.85+-orange?logo=rust)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> **Agnx** is a durable, portable runtime for AI agents.
+> **Agnx** — Assemble your own agent runtime.
 
-- **Sessions that survive** — crash, restart, reconnect from any terminal: agnx is durable by design
-- **Transparent state** — agent specs, memories, and sessions are human-readable files you can inspect, version, and export
-- **Sandboxed by default** — bubblewrap on Linux; Docker or trust mode on other platforms
-- **Pluggable everything** — file-based by default; bring your own storage or messaging backends
-- **Edge-ready** — single-binary core (~10-15MB), gateway plugins are optional separate binaries
+One binary. Modular parts. Zero dependencies.
 
-Core protocols built-in (CLI, HTTP, SSE). Platform integrations via plugins.
+Everything you need is self-contained, but every part is swappable.
 
-Self-host it directly, or use it as the foundation for agent-powered products.
+Build a personal assistant, a support bot, or a multi-tenant platform. Same runtime, same simplicity.
 
-## Why Agnx?
+### The problems we solve
 
-| Problem | Agnx Solution |
-|---------|---------------|
-| Sessions lost on crash or disconnect | **Durable sessions** — attach/detach like tmux, resume where you left off |
-| Agent definitions locked in proprietary formats | **Portable YAML + Markdown** — version control, inspect, migrate anywhere |
-| Hidden runtime state you can't access | **File-based by default** — sessions, memory, artifacts are just files |
-| Heavy frameworks with complex setup | **Single binary, ~10-15MB** — starts in milliseconds |
-| Vendor lock-in to specific LLM providers | **LLM-agnostic** — OpenRouter, OpenAI, Anthropic, Ollama |
+| Problem | Agnx |
+|---------|------|
+| Sessions lost on crash | **Durable** — attach/detach like tmux |
+| Agents locked in code | **Portable** — YAML + Markdown |
+| State hidden in databases | **Transparent** — just files you can read |
+| Heavy frameworks | **Minimal** — single binary, ~10MB, starts in milliseconds |
+| Dependency hell | **Self-contained** — no Python, no Node, no containers |
+
+### Modular by design
+
+Use the built-ins, or we'll provide mechanism later for you to build and swap in your own:
+
+| Component | Default | Swappable |
+|-----------|---------|-----------|
+| Gateways | CLI, HTTP, SSE, Telegram | Any platform via gateway plugins |
+| LLM | OpenRouter | Any provider |
+| Sandbox | Trust mode | bubblewrap, Docker *(planned)* |
+| Storage | Filesystem | Postgres, Redis, S3 *(planned)* |
+
+Swappability through clean interfaces. See [Gateway Protocol](./crates/agnx-gateway-protocol) for an example.
+
+### Work-in-Progress (to be released soon)
+
+Memory banks, tools, and orchestration.
+Built the Agnx way: simple, transparent, portable, swappable.
 
 ## Installation
 
@@ -79,23 +93,17 @@ agnx serve --port 8080
 ### 3. Chat with your agent
 
 ```bash
-# Interactive CLI
 agnx chat --agent my-assistant
-
-# Or via HTTP
-curl -X POST http://localhost:8080/api/v1/agents/my-assistant/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Hello!"}'
 ```
 
 ### 4. Attach to a session later
 
 ```bash
-# List sessions
-agnx sessions
+# List attachable sessions
+agnx attach --list
 
 # Attach to existing session
-agnx attach session_abc123
+agnx attach SESSION_ID
 ```
 
 ## Workspace Layout
@@ -105,14 +113,11 @@ agnx attach session_abc123
 ├── agents/<agent-name>/
 │   ├── agent.yaml           # Agent definition (AAF)
 │   ├── SYSTEM_PROMPT.md     # Agent personality
-│   ├── INSTRUCTIONS.md      # Behavioral rules
-│   └── skills/              # Local skills
-├── memory/                  # Durable memory (Markdown)
-├── sessions/
-│   └── <session_id>/
-│       ├── events.jsonl     # Append-only event log
-│       └── state.yaml       # Snapshot for fast resume
-└── artifacts/               # Generated outputs
+│   └── INSTRUCTIONS.md      # Behavioral rules (optional)
+└── sessions/
+    └── <session_id>/
+        ├── events.jsonl     # Append-only event log
+        └── state.yaml       # Snapshot for fast resume
 ```
 
 ## Documentation
@@ -133,9 +138,7 @@ agnx attach session_abc123
 - HTTP: Axum
 - Streaming: SSE
 - Config/spec: YAML (structured) + Markdown (prose)
-- Tool ecosystem: built-in, CLI tools, MCP
-- Discovery: A2A Agent Card
-- Sandbox: bubblewrap, Docker
+- LLM: OpenRouter, OpenAI, Anthropic, Ollama
 
 ## Contributing
 
