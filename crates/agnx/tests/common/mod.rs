@@ -7,6 +7,7 @@ use tokio::sync::Mutex;
 
 use agnx::agent::AgentStore;
 use agnx::background::BackgroundTasks;
+use agnx::gateway::GatewayManager;
 use agnx::llm::ProviderRegistry;
 use agnx::server::{self, AppState};
 use agnx::session::SessionStore;
@@ -34,6 +35,7 @@ pub async fn test_app() -> Router {
         background_tasks: BackgroundTasks::new(),
         shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
         admin_token: None,
+        gateways: GatewayManager::new(),
     };
 
     server::build_app(state, 300)

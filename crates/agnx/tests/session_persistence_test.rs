@@ -160,6 +160,7 @@ async fn snapshot_write_load_roundtrip() {
 
     let config = SessionConfig {
         on_disconnect: OnDisconnect::Continue,
+        ..Default::default()
     };
 
     let snapshot = SessionSnapshot::new(

@@ -75,6 +75,7 @@ async fn pause_mode_snapshot_written_with_paused_status() {
         conversation,
         SessionConfig {
             on_disconnect: OnDisconnect::Pause,
+            ..Default::default()
         },
     );
 
@@ -158,6 +159,7 @@ async fn pause_mode_snapshot_preserves_partial_conversation() {
         conversation,
         SessionConfig {
             on_disconnect: OnDisconnect::Pause,
+            ..Default::default()
         },
     );
 
@@ -200,6 +202,7 @@ async fn continue_mode_snapshot_written_with_running_status() {
         conversation,
         SessionConfig {
             on_disconnect: OnDisconnect::Continue,
+            ..Default::default()
         },
     );
 
@@ -361,6 +364,7 @@ async fn continue_mode_final_snapshot_has_active_status() {
         conversation,
         SessionConfig {
             on_disconnect: OnDisconnect::Continue,
+            ..Default::default()
         },
     );
 
@@ -460,6 +464,7 @@ async fn attach_to_paused_session() {
         conversation,
         SessionConfig {
             on_disconnect: OnDisconnect::Pause,
+            ..Default::default()
         },
     );
 
@@ -509,6 +514,7 @@ async fn attach_to_session_continued_in_background() {
         conversation,
         SessionConfig {
             on_disconnect: OnDisconnect::Continue,
+            ..Default::default()
         },
     );
 
@@ -550,6 +556,7 @@ async fn attach_to_session_still_running_in_background() {
         conversation,
         SessionConfig {
             on_disconnect: OnDisconnect::Continue,
+            ..Default::default()
         },
     );
 
@@ -689,9 +696,11 @@ fn on_disconnect_default_is_pause() {
 fn on_disconnect_serialization_roundtrip() {
     let pause_config = SessionConfig {
         on_disconnect: OnDisconnect::Pause,
+        ..Default::default()
     };
     let continue_config = SessionConfig {
         on_disconnect: OnDisconnect::Continue,
+        ..Default::default()
     };
 
     // Serialize and deserialize via JSON
@@ -766,6 +775,7 @@ async fn full_pause_mode_scenario() {
         messages,
         SessionConfig {
             on_disconnect: OnDisconnect::Pause,
+            ..Default::default()
         },
     );
 
@@ -809,6 +819,7 @@ async fn full_continue_mode_scenario() {
         initial_conversation.clone(),
         SessionConfig {
             on_disconnect: OnDisconnect::Continue,
+            ..Default::default()
         },
     );
 
@@ -890,6 +901,7 @@ async fn full_continue_mode_scenario() {
         final_conversation,
         SessionConfig {
             on_disconnect: OnDisconnect::Continue,
+            ..Default::default()
         },
     );
 
@@ -940,6 +952,7 @@ async fn multiple_disconnect_reconnect_cycles() {
         conversation_v1,
         SessionConfig {
             on_disconnect: OnDisconnect::Pause,
+            ..Default::default()
         },
     );
 
@@ -984,6 +997,7 @@ async fn multiple_disconnect_reconnect_cycles() {
         conversation_v2,
         SessionConfig {
             on_disconnect: OnDisconnect::Pause,
+            ..Default::default()
         },
     );
 

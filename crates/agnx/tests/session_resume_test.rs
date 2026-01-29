@@ -664,6 +664,7 @@ async fn resume_preserves_on_disconnect_pause() {
         vec![],
         SessionConfig {
             on_disconnect: OnDisconnect::Pause,
+            ..Default::default()
         },
     );
     write_snapshot(&sessions_dir(&temp_dir), session_id, &snapshot)
@@ -692,6 +693,7 @@ async fn resume_preserves_on_disconnect_continue() {
         vec![],
         SessionConfig {
             on_disconnect: OnDisconnect::Continue,
+            ..Default::default()
         },
     );
     write_snapshot(&sessions_dir(&temp_dir), session_id, &snapshot)
