@@ -13,6 +13,7 @@ use crate::background::BackgroundTasks;
 use crate::gateway::GatewayManager;
 use crate::handlers;
 use crate::llm::ProviderRegistry;
+use crate::sandbox::Sandbox;
 use crate::session::SessionStore;
 
 // ============================================================================
@@ -37,6 +38,8 @@ pub struct AppState {
     pub admin_token: Option<String>,
     /// Gateway manager for platform integrations.
     pub gateways: GatewayManager,
+    /// Sandbox for tool execution.
+    pub sandbox: Arc<dyn Sandbox>,
 }
 
 // ============================================================================

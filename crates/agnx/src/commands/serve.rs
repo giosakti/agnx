@@ -15,6 +15,7 @@ use agnx::client::AgentClient;
 use agnx::config::{self, Config, ExternalGatewayConfig};
 use agnx::gateway::{GatewayManager, SubprocessGateway};
 use agnx::llm::ProviderRegistry;
+use agnx::sandbox::{Sandbox, TrustSandbox};
 use agnx::server;
 use agnx::session;
 
@@ -98,6 +99,16 @@ pub async fn run(
     // Create shutdown channel for HTTP-triggered shutdown
     let (shutdown_tx, shutdown_rx) = server::shutdown_channel();
 
+    // Initialize sandbox based on config
+    let sandbox: Arc<dyn Sandbox> = match config.sandbox.mode.as_str() {
+        "trust" => Arc::new(TrustSandbox::new()),
+        other => {
+            warn!(mode = %other, "Unknown sandbox mode, falling back to trust");
+            Arc::new(TrustSandbox::new())
+        }
+    };
+    info!(mode = %sandbox.mode(), "Sandbox initialized");
+
     // Build app state
     let background_tasks = BackgroundTasks::new();
     let state = server::AppState {
@@ -111,6 +122,7 @@ pub async fn run(
         shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
         admin_token: config.server.admin_token.clone(),
         gateways: gateways.clone(),
+        sandbox,
     };
 
     let app = server::build_app(state, config.server.request_timeout_seconds);
