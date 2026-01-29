@@ -237,6 +237,7 @@ mod tests {
             .append(&SessionEvent::new(
                 2,
                 SessionEventPayload::AssistantMessage {
+                    agent: "test-agent".to_string(),
                     content: "Hi there!".to_string(),
                     usage: None,
                 },
@@ -258,6 +259,7 @@ mod tests {
             .append(&SessionEvent::new(
                 4,
                 SessionEventPayload::AssistantMessage {
+                    agent: "test-agent".to_string(),
                     content: "I'm doing great!".to_string(),
                     usage: Some(Usage {
                         prompt_tokens: 20,
@@ -387,6 +389,7 @@ mod tests {
             .append(&SessionEvent::new(
                 2,
                 SessionEventPayload::AssistantMessage {
+                    agent: "test-agent".to_string(),
                     content: "Hi!".to_string(),
                     usage: None,
                 },

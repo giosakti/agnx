@@ -72,6 +72,7 @@ pub struct AccumulatingStream {
     last_usage: Option<Usage>,
     sessions: SessionStore,
     session_id: String,
+    agent: String,
     sessions_path: PathBuf,
     started: bool,
     finished: bool,
@@ -142,6 +143,7 @@ impl AccumulatingStream {
             last_usage: None,
             sessions,
             session_id,
+            agent,
             sessions_path,
             started: false,
             finished: false,
@@ -160,6 +162,7 @@ impl AccumulatingStream {
         if !self.accumulated.is_empty() {
             let sessions = self.sessions.clone();
             let session_id = self.session_id.clone();
+            let agent = self.agent.clone();
             let content = std::mem::take(&mut self.accumulated);
             let usage = self.last_usage.take();
             let sessions_path = self.sessions_path.clone();
@@ -171,7 +174,7 @@ impl AccumulatingStream {
             );
 
             self.background_tasks.spawn(async move {
-                if let Err(e) = persist_assistant_message(&sessions, &sessions_path, &session_id, content, usage).await {
+                if let Err(e) = persist_assistant_message(&sessions, &sessions_path, &session_id, &agent, content, usage).await {
                     warn!(session_id = %session_id, error = %e, "Failed to persist assistant message");
                 }
             });
@@ -380,6 +383,7 @@ async fn handle_disconnect(ctx: StreamContext, payload: DisconnectPayload) {
                         &ctx.sessions,
                         &ctx.sessions_path,
                         &ctx.session_id,
+                        &ctx.agent,
                         payload.accumulated,
                         None,
                     )
@@ -420,6 +424,7 @@ async fn handle_disconnect(ctx: StreamContext, payload: DisconnectPayload) {
                     &ctx.sessions,
                     &ctx.sessions_path,
                     &ctx.session_id,
+                    &ctx.agent,
                     payload.accumulated,
                     None,
                 )
@@ -523,6 +528,7 @@ async fn continue_stream_in_background(
             &ctx.sessions,
             &ctx.sessions_path,
             &ctx.session_id,
+            &ctx.agent,
             result.accumulated,
             result.usage,
         )

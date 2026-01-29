@@ -284,6 +284,7 @@ impl GatewayMessageHandler {
             &self.sessions,
             &self.sessions_path,
             session_id,
+            &session.agent,
             assistant_content.clone(),
             response.usage,
         )

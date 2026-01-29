@@ -235,6 +235,7 @@ async fn continue_mode_events_logged_during_background_processing() {
         .append(&SessionEvent::new(
             1,
             SessionEventPayload::AssistantMessage {
+                agent: "test-agent".to_string(),
                 content: "Rust ".to_string(),
                 usage: None,
             },
@@ -246,6 +247,7 @@ async fn continue_mode_events_logged_during_background_processing() {
         .append(&SessionEvent::new(
             2,
             SessionEventPayload::AssistantMessage {
+                agent: "test-agent".to_string(),
                 content: "is ".to_string(),
                 usage: None,
             },
@@ -257,6 +259,7 @@ async fn continue_mode_events_logged_during_background_processing() {
         .append(&SessionEvent::new(
             3,
             SessionEventPayload::AssistantMessage {
+                agent: "test-agent".to_string(),
                 content: "great!".to_string(),
                 usage: None,
             },
@@ -269,6 +272,7 @@ async fn continue_mode_events_logged_during_background_processing() {
         .append(&SessionEvent::new(
             4,
             SessionEventPayload::AssistantMessage {
+                agent: "test-agent".to_string(),
                 content: String::new(),
                 usage: Some(Usage {
                     prompt_tokens: 10,
@@ -397,6 +401,7 @@ async fn continue_mode_error_event_logged_on_failure() {
         .append(&SessionEvent::new(
             1,
             SessionEventPayload::AssistantMessage {
+                agent: "test-agent".to_string(),
                 content: "Let me ".to_string(),
                 usage: None,
             },
@@ -583,6 +588,7 @@ async fn attach_to_session_still_running_in_background() {
         .append(&SessionEvent::new(
             2,
             SessionEventPayload::AssistantMessage {
+                agent: "test-agent".to_string(),
                 content: "Here is a partial response so far...".to_string(),
                 usage: None,
             },
@@ -846,6 +852,7 @@ async fn full_continue_mode_scenario() {
         .append(&SessionEvent::new(
             2,
             SessionEventPayload::AssistantMessage {
+                agent: "test-agent".to_string(),
                 content: "Code ".to_string(),
                 usage: None,
             },
@@ -857,6 +864,7 @@ async fn full_continue_mode_scenario() {
         .append(&SessionEvent::new(
             3,
             SessionEventPayload::AssistantMessage {
+                agent: "test-agent".to_string(),
                 content: "compiles ".to_string(),
                 usage: None,
             },
@@ -868,6 +876,7 @@ async fn full_continue_mode_scenario() {
         .append(&SessionEvent::new(
             4,
             SessionEventPayload::AssistantMessage {
+                agent: "test-agent".to_string(),
                 content: "without error\nJoy fills my heart today\nRust is beautiful".to_string(),
                 usage: Some(Usage {
                     prompt_tokens: 15,

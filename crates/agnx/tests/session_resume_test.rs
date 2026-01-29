@@ -121,6 +121,7 @@ async fn resume_session_with_snapshot_and_events_to_replay() {
         .append(&SessionEvent::new(
             2,
             SessionEventPayload::AssistantMessage {
+                agent: "resume-agent".to_string(),
                 content: "First answer".to_string(),
                 usage: None,
             },
@@ -142,6 +143,7 @@ async fn resume_session_with_snapshot_and_events_to_replay() {
         .append(&SessionEvent::new(
             4,
             SessionEventPayload::AssistantMessage {
+                agent: "resume-agent".to_string(),
                 content: "Second answer".to_string(),
                 usage: Some(Usage {
                     prompt_tokens: 20,
@@ -202,6 +204,7 @@ async fn resume_session_rebuilds_conversation_in_order() {
             }
         } else {
             SessionEventPayload::AssistantMessage {
+                agent: "test-agent".to_string(),
                 content: content.to_string(),
                 usage: None,
             }
@@ -617,6 +620,7 @@ async fn resume_with_malformed_events_skips_bad_lines() {
     let valid_event_2 = SessionEvent::new(
         2,
         SessionEventPayload::AssistantMessage {
+            agent: "test-agent".to_string(),
             content: "Valid 2".to_string(),
             usage: None,
         },
@@ -769,6 +773,7 @@ async fn resume_ignores_tool_call_and_result_events() {
         .append(&SessionEvent::new(
             4,
             SessionEventPayload::AssistantMessage {
+                agent: "test-agent".to_string(),
                 content: "Here are the results".to_string(),
                 usage: None,
             },
@@ -828,6 +833,7 @@ async fn resume_ignores_error_events() {
         .append(&SessionEvent::new(
             3,
             SessionEventPayload::AssistantMessage {
+                agent: "test-agent".to_string(),
                 content: "Hi there".to_string(),
                 usage: None,
             },
@@ -1007,6 +1013,7 @@ async fn resume_after_crash_mid_conversation() {
         .append(&SessionEvent::new(
             5,
             SessionEventPayload::AssistantMessage {
+                agent: "test-agent".to_string(),
                 content: "Sure! Here is a Hello World:".to_string(),
                 usage: None,
             },
@@ -1099,6 +1106,7 @@ async fn resume_with_status_change_and_messages() {
         .append(&SessionEvent::new(
             4,
             SessionEventPayload::AssistantMessage {
+                agent: "test-agent".to_string(),
                 content: "Hi!".to_string(),
                 usage: None,
             },

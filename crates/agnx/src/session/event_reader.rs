@@ -174,6 +174,7 @@ mod tests {
             SessionEvent::new(
                 3,
                 SessionEventPayload::AssistantMessage {
+                    agent: "my-agent".to_string(),
                     content: "Hi!".to_string(),
                     usage: Some(Usage {
                         prompt_tokens: 10,

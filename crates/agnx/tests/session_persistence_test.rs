@@ -50,6 +50,7 @@ async fn event_write_read_roundtrip() {
         SessionEvent::new(
             3,
             SessionEventPayload::AssistantMessage {
+                agent: "test-agent".to_string(),
                 content: "Hello! How can I help?".to_string(),
                 usage: Some(Usage {
                     prompt_tokens: 10,
@@ -94,7 +95,12 @@ async fn event_write_read_roundtrip() {
 
     assert_eq!(read_events[2].seq, 3);
     match &read_events[2].payload {
-        SessionEventPayload::AssistantMessage { content, usage } => {
+        SessionEventPayload::AssistantMessage {
+            agent,
+            content,
+            usage,
+        } => {
+            assert_eq!(agent, "test-agent");
             assert_eq!(content, "Hello! How can I help?");
             assert!(usage.is_some());
             let usage = usage.as_ref().unwrap();
@@ -337,6 +343,7 @@ async fn events_and_snapshot_coordinate_recovery() {
         .append(&SessionEvent::new(
             3,
             SessionEventPayload::AssistantMessage {
+                agent: "recovery-agent".to_string(),
                 content: "Hi there!".to_string(),
                 usage: None,
             },
@@ -383,6 +390,7 @@ async fn events_and_snapshot_coordinate_recovery() {
         .append(&SessionEvent::new(
             5,
             SessionEventPayload::AssistantMessage {
+                agent: "recovery-agent".to_string(),
                 content: "I'm doing well!".to_string(),
                 usage: None,
             },
@@ -835,6 +843,7 @@ async fn all_event_types_roundtrip() {
         SessionEvent::new(
             5,
             SessionEventPayload::AssistantMessage {
+                agent: "test-agent".to_string(),
                 content: "Here's what I found about Rust.".to_string(),
                 usage: Some(Usage {
                     prompt_tokens: 50,

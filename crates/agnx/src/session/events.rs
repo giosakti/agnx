@@ -33,6 +33,8 @@ pub enum SessionEventPayload {
     UserMessage { content: String },
     /// Assistant (LLM) responded.
     AssistantMessage {
+        /// Which agent produced this response.
+        agent: String,
         content: String,
         /// Token usage for this response, if available.
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -132,6 +134,7 @@ mod tests {
         let event = SessionEvent::new(
             2,
             SessionEventPayload::AssistantMessage {
+                agent: "test-agent".to_string(),
                 content: "Hi there!".to_string(),
                 usage: Some(Usage {
                     prompt_tokens: 10,
@@ -143,6 +146,7 @@ mod tests {
 
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"type\":\"assistant_message\""));
+        assert!(json.contains("\"agent\":\"test-agent\""));
         assert!(json.contains("\"prompt_tokens\":10"));
     }
 
@@ -200,6 +204,7 @@ mod tests {
         let assistant_event = SessionEvent::new(
             2,
             SessionEventPayload::AssistantMessage {
+                agent: "test-agent".to_string(),
                 content: "Hi".to_string(),
                 usage: None,
             },

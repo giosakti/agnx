@@ -135,6 +135,7 @@ pub async fn persist_assistant_message(
     sessions: &SessionStore,
     sessions_path: &Path,
     session_id: &str,
+    agent: &str,
     content: String,
     usage: Option<Usage>,
 ) -> Result<u64> {
@@ -148,7 +149,11 @@ pub async fn persist_assistant_message(
         sessions,
         sessions_path,
         session_id,
-        SessionEventPayload::AssistantMessage { content, usage },
+        SessionEventPayload::AssistantMessage {
+            agent: agent.to_string(),
+            content,
+            usage,
+        },
     )
     .await
 }

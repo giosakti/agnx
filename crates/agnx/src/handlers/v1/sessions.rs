@@ -163,6 +163,12 @@ pub async fn send_message(
         Err(e) => return e.into_response(),
     };
 
+    // Get session info for agent name
+    let session = match state.sessions.get(&session_id).await {
+        Some(s) => s,
+        None => return problem_details::not_found("session not found").into_response(),
+    };
+
     let chat_response = match ctx.provider.chat(ctx.request).await {
         Ok(resp) => resp,
         Err(e) => {
@@ -182,6 +188,7 @@ pub async fn send_message(
         &state.sessions,
         &state.sessions_path,
         &session_id,
+        &session.agent,
         assistant_content.clone(),
         chat_response.usage.clone(),
     )
