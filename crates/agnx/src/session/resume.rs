@@ -92,16 +92,10 @@ async fn replay_events(
 
         match &event.payload {
             SessionEventPayload::UserMessage { content } => {
-                conversation.push(Message {
-                    role: crate::llm::Role::User,
-                    content: content.clone(),
-                });
+                conversation.push(Message::text(crate::llm::Role::User, content));
             }
             SessionEventPayload::AssistantMessage { content, .. } => {
-                conversation.push(Message {
-                    role: crate::llm::Role::Assistant,
-                    content: content.clone(),
-                });
+                conversation.push(Message::text(crate::llm::Role::Assistant, content));
             }
             SessionEventPayload::StatusChange { to, .. } => {
                 status = *to;
@@ -159,14 +153,8 @@ mod tests {
             Utc::now(),
             last_event_seq,
             vec![
-                Message {
-                    role: Role::User,
-                    content: "Hello".to_string(),
-                },
-                Message {
-                    role: Role::Assistant,
-                    content: "Hi there!".to_string(),
-                },
+                Message::text(Role::User, "Hello"),
+                Message::text(Role::Assistant, "Hi there!"),
             ],
             SessionConfig::default(),
         )
@@ -277,10 +265,10 @@ mod tests {
 
         let resumed = result.unwrap();
         assert_eq!(resumed.conversation.len(), 4);
-        assert_eq!(resumed.conversation[0].content, "Hello");
-        assert_eq!(resumed.conversation[1].content, "Hi there!");
-        assert_eq!(resumed.conversation[2].content, "How are you?");
-        assert_eq!(resumed.conversation[3].content, "I'm doing great!");
+        assert_eq!(resumed.conversation[0].content_str(), "Hello");
+        assert_eq!(resumed.conversation[1].content_str(), "Hi there!");
+        assert_eq!(resumed.conversation[2].content_str(), "How are you?");
+        assert_eq!(resumed.conversation[3].content_str(), "I'm doing great!");
         assert_eq!(resumed.last_event_seq, 4);
     }
 
@@ -438,7 +426,7 @@ mod tests {
         // Snapshot had 2 messages, replay adds 1 more (seq 5)
         // Tool events at seq 3 and 4 don't add messages
         assert_eq!(resumed.conversation.len(), 3);
-        assert_eq!(resumed.conversation[2].content, "Thanks!");
+        assert_eq!(resumed.conversation[2].content_str(), "Thanks!");
         assert_eq!(resumed.last_event_seq, 5);
     }
 

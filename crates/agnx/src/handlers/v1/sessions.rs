@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use uuid::Uuid;
 
-use crate::agent::OnDisconnect;
+use crate::agent::{AgentSpec, OnDisconnect};
 use crate::api::{
     CreateSessionRequest, CreateSessionResponse, GetMessagesResponse, GetSessionResponse,
     ListSessionsResponse, MessageResponse, SendMessageRequest, SendMessageResponse, SessionStatus,
@@ -24,8 +24,9 @@ use crate::llm::{ChatRequest, LLMProvider, Message, Role};
 use crate::server::AppState;
 use crate::session::{
     AccumulatingStream, SessionContext, SessionEventPayload, StreamConfig, build_chat_request,
-    build_system_message, commit_event, persist_assistant_message, record_event,
+    build_system_message, commit_event, persist_assistant_message, record_event, run_agentic_loop,
 };
+use crate::tools::ToolExecutor;
 
 // ============================================================================
 // Query Types
@@ -142,7 +143,7 @@ pub async fn get_messages(
 
     let iter = messages.into_iter().map(|m| MessageResponse {
         role: m.role.to_string(),
-        content: m.content,
+        content: m.content.unwrap_or_default(),
     });
     let messages: Vec<_> = match query.limit {
         Some(limit) => iter.take(limit as usize).collect(),
@@ -169,6 +170,13 @@ pub async fn send_message(
         None => return problem_details::not_found("session not found").into_response(),
     };
 
+    // Check if agent has tools configured
+    if !ctx.agent_spec.tools.is_empty() {
+        // Use agentic loop for tool-using agents
+        return send_message_agentic(&state, &session_id, &session.agent, ctx).await;
+    }
+
+    // Simple single-turn for agents without tools
     let chat_response = match ctx.provider.chat(ctx.request).await {
         Ok(resp) => resp,
         Err(e) => {
@@ -180,7 +188,7 @@ pub async fn send_message(
     let assistant_content = chat_response
         .choices
         .first()
-        .map(|c| c.message.content.clone())
+        .and_then(|c| c.message.content.clone())
         .unwrap_or_default();
 
     // Persist assistant message to store and event log
@@ -209,6 +217,70 @@ pub async fn send_message(
         ),
         role: "assistant".to_string(),
         content: assistant_content,
+    };
+
+    (StatusCode::OK, Json(response)).into_response()
+}
+
+/// Handle send_message for agents with tools using the agentic loop.
+async fn send_message_agentic(
+    state: &AppState,
+    session_id: &str,
+    agent_name: &str,
+    ctx: ChatContext,
+) -> Response {
+    // Create tool executor
+    let executor = ToolExecutor::new(
+        ctx.agent_spec.tools.clone(),
+        state.sandbox.clone(),
+        ctx.agent_dir.clone(),
+    );
+
+    // Run the agentic loop
+    let result = match run_agentic_loop(
+        ctx.provider,
+        &executor,
+        &ctx.agent_spec,
+        ctx.request.messages,
+        &state.sessions,
+        &state.sessions_path,
+        session_id,
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            return problem_details::internal_error(format!("agentic loop failed: {}", e))
+                .into_response();
+        }
+    };
+
+    // Persist final assistant message
+    if let Err(e) = persist_assistant_message(
+        &state.sessions,
+        &state.sessions_path,
+        session_id,
+        agent_name,
+        result.content.clone(),
+        result.usage.clone(),
+    )
+    .await
+    {
+        return problem_details::internal_error(format!(
+            "failed to persist assistant message: {}",
+            e
+        ))
+        .into_response();
+    }
+
+    let response = SendMessageResponse {
+        message_id: format!(
+            "{}{}",
+            crate::api::MESSAGE_ID_PREFIX,
+            Uuid::new_v4().simple()
+        ),
+        role: "assistant".to_string(),
+        content: result.content,
     };
 
     (StatusCode::OK, Json(response)).into_response()
@@ -332,6 +404,8 @@ struct ChatContext {
     request: ChatRequest,
     provider: Arc<dyn LLMProvider>,
     on_disconnect: OnDisconnect,
+    agent_spec: Arc<AgentSpec>,
+    agent_dir: std::path::PathBuf,
 }
 
 /// Prepare chat context for LLM request.
@@ -352,10 +426,7 @@ async fn prepare_chat_context(
     };
 
     let content_for_event = user_content.clone();
-    let user_message = Message {
-        role: Role::User,
-        content: user_content,
-    };
+    let user_message = Message::text(Role::User, user_content);
     if state
         .sessions
         .add_message(session_id, user_message)
@@ -405,9 +476,14 @@ async fn prepare_chat_context(
         agent.model.max_output_tokens,
     );
 
+    let agent_dir = agent.agent_dir.clone();
+    let agent_spec = Arc::new(agent.clone());
+
     Ok(ChatContext {
         request: chat_request,
         provider,
         on_disconnect: agent.session.on_disconnect,
+        agent_spec,
+        agent_dir,
     })
 }

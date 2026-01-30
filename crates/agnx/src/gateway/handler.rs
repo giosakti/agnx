@@ -24,6 +24,33 @@ use crate::session::{
 };
 
 // ============================================================================
+// Routing Config
+// ============================================================================
+
+/// Routing configuration for agent selection.
+///
+/// Contains global routing rules evaluated in order (first match wins).
+/// A rule with empty/no match conditions acts as a catch-all.
+#[derive(Debug, Clone, Default)]
+pub struct RoutingConfig {
+    /// Routing rules (evaluated in order, first match wins).
+    /// Last rule with empty match acts as default/catch-all.
+    pub rules: Vec<RoutingRule>,
+}
+
+impl RoutingConfig {
+    /// Create a config from a list of routing rules.
+    pub fn new(rules: Vec<RoutingRule>) -> Self {
+        Self { rules }
+    }
+
+    /// Create an empty config (no routes - messages will be dropped).
+    pub fn empty() -> Self {
+        Self { rules: Vec::new() }
+    }
+}
+
+// ============================================================================
 // Gateway Message Handler
 // ============================================================================
 
@@ -216,10 +243,7 @@ impl GatewayMessageHandler {
         let agent = self.agents.get(&session.agent)?;
 
         // Add user message to session
-        let user_message = Message {
-            role: Role::User,
-            content: text.to_string(),
-        };
+        let user_message = Message::text(Role::User, text);
         if self
             .sessions
             .add_message(session_id, user_message)
@@ -276,7 +300,7 @@ impl GatewayMessageHandler {
         let assistant_content = response
             .choices
             .first()
-            .map(|c| c.message.content.clone())
+            .and_then(|c| c.message.content.clone())
             .unwrap_or_default();
 
         // Persist assistant message
@@ -329,33 +353,6 @@ impl MessageHandler for GatewayMessageHandler {
                 None
             }
         }
-    }
-}
-
-// ============================================================================
-// Routing Config
-// ============================================================================
-
-/// Routing configuration for agent selection.
-///
-/// Contains global routing rules evaluated in order (first match wins).
-/// A rule with empty/no match conditions acts as a catch-all.
-#[derive(Debug, Clone, Default)]
-pub struct RoutingConfig {
-    /// Routing rules (evaluated in order, first match wins).
-    /// Last rule with empty match acts as default/catch-all.
-    pub rules: Vec<RoutingRule>,
-}
-
-impl RoutingConfig {
-    /// Create a config from a list of routing rules.
-    pub fn new(rules: Vec<RoutingRule>) -> Self {
-        Self { rules }
-    }
-
-    /// Create an empty config (no routes - messages will be dropped).
-    pub fn empty() -> Self {
-        Self { rules: Vec::new() }
     }
 }
 

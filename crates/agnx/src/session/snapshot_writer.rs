@@ -98,14 +98,8 @@ mod tests {
             Utc::now(),
             42,
             vec![
-                Message {
-                    role: Role::User,
-                    content: "Hello".to_string(),
-                },
-                Message {
-                    role: Role::Assistant,
-                    content: "Hi there!".to_string(),
-                },
+                Message::text(Role::User, "Hello"),
+                Message::text(Role::Assistant, "Hi there!"),
             ],
             SessionConfig::default(),
         );
@@ -130,10 +124,7 @@ mod tests {
             SessionStatus::Paused,
             Utc::now(),
             100,
-            vec![Message {
-                role: Role::User,
-                content: "Test message".to_string(),
-            }],
+            vec![Message::text(Role::User, "Test message")],
             SessionConfig::default(),
         );
 

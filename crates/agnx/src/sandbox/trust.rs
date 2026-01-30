@@ -1,9 +1,10 @@
 use std::path::Path;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::process::Command;
 
-use super::{ExecResult, Sandbox, SandboxError};
+use super::{DEFAULT_EXEC_TIMEOUT, ExecResult, Sandbox, SandboxError};
 
 /// No isolation — commands run directly in the host environment.
 #[derive(Debug)]
@@ -28,7 +29,10 @@ impl Sandbox for TrustSandbox {
         cmd: &str,
         args: &[String],
         cwd: Option<&Path>,
+        timeout: Option<Duration>,
     ) -> Result<ExecResult, SandboxError> {
+        let timeout = timeout.unwrap_or(DEFAULT_EXEC_TIMEOUT);
+
         let mut command = Command::new(cmd);
         command.args(args);
 
@@ -36,11 +40,13 @@ impl Sandbox for TrustSandbox {
             command.current_dir(dir);
         }
 
-        let output = command.output().await?;
+        let output = match tokio::time::timeout(timeout, command.output()).await {
+            Ok(result) => result?,
+            Err(_) => return Err(SandboxError::Timeout(timeout)),
+        };
 
         Ok(ExecResult {
             // Returns -1 if killed by signal (SIGKILL, SIGSEGV, etc.)
-            // TODO: Capture signal info when tool execution lands in v0.4.0
             exit_code: output.status.code().unwrap_or(-1),
             stdout: String::from_utf8_lossy(&output.stdout).to_string(),
             stderr: String::from_utf8_lossy(&output.stderr).to_string(),
@@ -61,7 +67,7 @@ mod tests {
     async fn test_exec_simple_command() {
         let sandbox = TrustSandbox::new();
         let result = sandbox
-            .exec("echo", &["hello".to_string()], None)
+            .exec("echo", &["hello".to_string()], None, None)
             .await
             .unwrap();
 
@@ -75,7 +81,7 @@ mod tests {
         let tmp_dir = TempDir::new().unwrap();
         let sandbox = TrustSandbox::new();
         let result = sandbox
-            .exec("pwd", &[], Some(tmp_dir.path()))
+            .exec("pwd", &[], Some(tmp_dir.path()), None)
             .await
             .unwrap();
 
@@ -86,7 +92,7 @@ mod tests {
     #[tokio::test]
     async fn test_exec_failing_command() {
         let sandbox = TrustSandbox::new();
-        let result = sandbox.exec("false", &[], None).await.unwrap();
+        let result = sandbox.exec("false", &[], None, None).await.unwrap();
 
         assert_ne!(result.exit_code, 0);
     }
@@ -94,9 +100,26 @@ mod tests {
     #[tokio::test]
     async fn test_exec_command_not_found() {
         let sandbox = TrustSandbox::new();
-        let result = sandbox.exec("nonexistent_command_12345", &[], None).await;
+        let result = sandbox
+            .exec("nonexistent_command_12345", &[], None, None)
+            .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_exec_timeout() {
+        let sandbox = TrustSandbox::new();
+        let result = sandbox
+            .exec(
+                "sleep",
+                &["10".to_string()],
+                None,
+                Some(Duration::from_millis(100)),
+            )
+            .await;
+
+        assert!(matches!(result, Err(SandboxError::Timeout(_))));
     }
 
     #[test]

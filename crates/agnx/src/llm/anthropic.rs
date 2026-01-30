@@ -10,7 +10,8 @@ use reqwest::Client;
 use super::error::LLMError;
 use super::provider::LLMProvider;
 use super::types::{
-    ChatRequest, ChatResponse, ChatStream, Choice, Message, Role, StreamEvent, Usage,
+    ChatRequest, ChatResponse, ChatStream, Choice, FunctionCall, Message, Role, StreamEvent,
+    ToolCall, ToolDefinition, Usage,
 };
 use crate::sse::SseEventStream;
 
@@ -104,13 +105,62 @@ struct Request {
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<AnthropicTool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
 }
 
+/// Anthropic tool definition format.
 #[derive(serde::Serialize)]
-struct RequestMessage {
-    role: String,
-    content: String,
+struct AnthropicTool {
+    name: String,
+    description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    input_schema: Option<serde_json::Value>,
+}
+
+/// Convert OpenAI-style tool definitions to Anthropic format.
+fn convert_tools(tools: Option<&Vec<ToolDefinition>>) -> Option<Vec<AnthropicTool>> {
+    tools.map(|ts| {
+        ts.iter()
+            .map(|t| AnthropicTool {
+                name: t.function.name.clone(),
+                description: t.function.description.clone(),
+                input_schema: t.function.parameters.clone(),
+            })
+            .collect()
+    })
+}
+
+#[derive(serde::Serialize)]
+#[serde(untagged)]
+enum RequestMessage {
+    /// Simple text message.
+    Text { role: String, content: String },
+    /// Message with content blocks (for tool results).
+    ContentBlocks {
+        role: String,
+        content: Vec<ContentBlock>,
+    },
+}
+
+/// Content block for Anthropic messages.
+#[derive(serde::Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ContentBlock {
+    /// Text content.
+    Text { text: String },
+    /// Tool use by the assistant.
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    /// Tool result from the user.
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+    },
 }
 
 #[derive(serde::Deserialize)]
@@ -145,19 +195,69 @@ fn to_request(request: &ChatRequest, stream: Option<bool>) -> Request {
     for msg in &request.messages {
         match msg.role {
             Role::System => {
-                system = Some(msg.content.clone());
+                system = msg.content.clone();
             }
             Role::User => {
-                messages.push(RequestMessage {
+                let content = msg.content.clone().unwrap_or_default();
+                messages.push(RequestMessage::Text {
                     role: "user".to_string(),
-                    content: msg.content.clone(),
+                    content,
                 });
             }
             Role::Assistant => {
-                messages.push(RequestMessage {
-                    role: "assistant".to_string(),
-                    content: msg.content.clone(),
-                });
+                // Check if this is a tool call response
+                if let Some(ref tool_calls) = msg.tool_calls {
+                    let mut blocks = Vec::new();
+                    // Include text content if present
+                    if let Some(ref content) = msg.content
+                        && !content.is_empty()
+                    {
+                        blocks.push(ContentBlock::Text {
+                            text: content.clone(),
+                        });
+                    }
+                    // Add tool use blocks
+                    for tc in tool_calls {
+                        let input: serde_json::Value = serde_json::from_str(&tc.function.arguments)
+                            .unwrap_or_else(|e| {
+                                tracing::warn!(
+                                    tool_call_id = %tc.id,
+                                    tool_name = %tc.function.name,
+                                    error = %e,
+                                    "Failed to parse tool call arguments, using empty object"
+                                );
+                                serde_json::Value::Object(Default::default())
+                            });
+                        blocks.push(ContentBlock::ToolUse {
+                            id: tc.id.clone(),
+                            name: tc.function.name.clone(),
+                            input,
+                        });
+                    }
+                    messages.push(RequestMessage::ContentBlocks {
+                        role: "assistant".to_string(),
+                        content: blocks,
+                    });
+                } else {
+                    let content = msg.content.clone().unwrap_or_default();
+                    messages.push(RequestMessage::Text {
+                        role: "assistant".to_string(),
+                        content,
+                    });
+                }
+            }
+            Role::Tool => {
+                // Tool results in Anthropic are sent as user messages with tool_result content
+                if let Some(ref tool_call_id) = msg.tool_call_id {
+                    let content = msg.content.clone().unwrap_or_default();
+                    messages.push(RequestMessage::ContentBlocks {
+                        role: "user".to_string(),
+                        content: vec![ContentBlock::ToolResult {
+                            tool_use_id: tool_call_id.clone(),
+                            content,
+                        }],
+                    });
+                }
             }
         }
     }
@@ -168,6 +268,7 @@ fn to_request(request: &ChatRequest, stream: Option<bool>) -> Request {
         system,
         messages,
         temperature: request.temperature,
+        tools: convert_tools(request.tools.as_ref()),
         stream,
     }
 }
@@ -185,10 +286,7 @@ fn from_response(response: Response) -> ChatResponse {
         id: response.id,
         choices: vec![Choice {
             index: 0,
-            message: Message {
-                role: Role::Assistant,
-                content,
-            },
+            message: Message::text(Role::Assistant, content),
             finish_reason: response.stop_reason,
         }],
         usage: response.usage.map(|u| Usage {
@@ -208,6 +306,18 @@ struct AnthropicStreamAdapter<S> {
     inner: SseEventStream<S>,
     done: bool,
     usage: Option<Usage>,
+    /// Accumulated tool calls from streaming.
+    tool_calls: Vec<ToolCallAccumulator>,
+    /// Current tool call index being accumulated.
+    current_tool_index: Option<usize>,
+}
+
+/// Accumulates tool call data from streaming chunks.
+#[derive(Default)]
+struct ToolCallAccumulator {
+    id: String,
+    name: String,
+    input_json: String,
 }
 
 impl<S> AnthropicStreamAdapter<S> {
@@ -216,7 +326,25 @@ impl<S> AnthropicStreamAdapter<S> {
             inner,
             done: false,
             usage: None,
+            tool_calls: Vec::new(),
+            current_tool_index: None,
         }
+    }
+
+    /// Convert accumulated tool calls into final ToolCall structs.
+    fn finalize_tool_calls(&mut self) -> Vec<ToolCall> {
+        std::mem::take(&mut self.tool_calls)
+            .into_iter()
+            .filter(|tc| !tc.id.is_empty())
+            .map(|tc| ToolCall {
+                id: tc.id,
+                tool_type: "function".to_string(),
+                function: FunctionCall {
+                    name: tc.name,
+                    arguments: tc.input_json,
+                },
+            })
+            .collect()
     }
 }
 
@@ -241,22 +369,76 @@ where
                     // Parse Anthropic event JSON
                     match serde_json::from_str::<AnthropicStreamEvent>(&event.data) {
                         Ok(parsed) => match parsed {
-                            AnthropicStreamEvent::ContentBlockDelta { delta } => {
+                            AnthropicStreamEvent::ContentBlockStart {
+                                index,
+                                content_block: Some(block),
+                            } if block.block_type == "tool_use" => {
+                                let idx = index.unwrap_or(0) as usize;
+                                while self.tool_calls.len() <= idx {
+                                    self.tool_calls.push(ToolCallAccumulator::default());
+                                }
+                                self.tool_calls[idx].id = block.id.unwrap_or_default();
+                                self.tool_calls[idx].name = block.name.unwrap_or_default();
+                                self.current_tool_index = Some(idx);
+                            }
+                            AnthropicStreamEvent::ContentBlockStart { .. } => {
+                                // Non-tool_use content blocks - ignore
+                            }
+                            AnthropicStreamEvent::ContentBlockDelta { index, delta } => {
+                                // Handle text delta
                                 if let Some(text) = delta.text
                                     && !text.is_empty()
                                 {
                                     return Poll::Ready(Some(Ok(StreamEvent::Token(text))));
                                 }
+                                // Handle tool input delta
+                                if let Some(partial_json) = delta.partial_json {
+                                    let idx = index.unwrap_or_else(|| {
+                                        self.current_tool_index.unwrap_or(0) as u32
+                                    }) as usize;
+                                    if idx < self.tool_calls.len() {
+                                        self.tool_calls[idx].input_json.push_str(&partial_json);
+                                    }
+                                }
                             }
-                            AnthropicStreamEvent::MessageDelta { usage: Some(u), .. } => {
+                            AnthropicStreamEvent::ContentBlockStop { .. } => {
+                                // Block finished, nothing special to do
+                            }
+                            AnthropicStreamEvent::MessageDelta {
+                                usage: Some(u),
+                                stop_reason,
+                                ..
+                            } => {
                                 self.usage = Some(Usage {
                                     prompt_tokens: 0,
                                     completion_tokens: u.output_tokens,
                                     total_tokens: u.output_tokens,
                                 });
+                                // Check if we're ending due to tool use
+                                if stop_reason.as_deref() == Some("tool_use")
+                                    && !self.tool_calls.is_empty()
+                                {
+                                    let tool_calls = self.finalize_tool_calls();
+                                    if !tool_calls.is_empty() {
+                                        return Poll::Ready(Some(Ok(StreamEvent::ToolCalls(
+                                            tool_calls,
+                                        ))));
+                                    }
+                                }
                             }
                             AnthropicStreamEvent::MessageStop => {
                                 self.done = true;
+
+                                // Emit any pending tool calls
+                                if !self.tool_calls.is_empty() {
+                                    let tool_calls = self.finalize_tool_calls();
+                                    if !tool_calls.is_empty() {
+                                        return Poll::Ready(Some(Ok(StreamEvent::ToolCalls(
+                                            tool_calls,
+                                        ))));
+                                    }
+                                }
+
                                 return Poll::Ready(Some(Ok(StreamEvent::Done {
                                     usage: self.usage.take(),
                                 })));
@@ -277,6 +459,15 @@ where
                 }
                 Poll::Ready(None) => {
                     self.done = true;
+
+                    // Emit any pending tool calls
+                    if !self.tool_calls.is_empty() {
+                        let tool_calls = self.finalize_tool_calls();
+                        if !tool_calls.is_empty() {
+                            return Poll::Ready(Some(Ok(StreamEvent::ToolCalls(tool_calls))));
+                        }
+                    }
+
                     return Poll::Ready(Some(Ok(StreamEvent::Done {
                         usage: self.usage.take(),
                     })));
@@ -300,9 +491,10 @@ enum AnthropicStreamEvent {
     },
     ContentBlockStart {
         index: Option<u32>,
-        content_block: Option<serde_json::Value>,
+        content_block: Option<StreamContentBlock>,
     },
     ContentBlockDelta {
+        index: Option<u32>,
         delta: Delta,
     },
     ContentBlockStop {
@@ -311,6 +503,7 @@ enum AnthropicStreamEvent {
     MessageDelta {
         delta: Option<serde_json::Value>,
         usage: Option<StreamUsage>,
+        stop_reason: Option<String>,
     },
     MessageStop,
     Ping,
@@ -318,9 +511,23 @@ enum AnthropicStreamEvent {
     Unknown,
 }
 
+/// Content block in streaming events.
+#[derive(serde::Deserialize)]
+struct StreamContentBlock {
+    #[serde(rename = "type")]
+    block_type: String,
+    /// Tool use ID (for tool_use blocks).
+    id: Option<String>,
+    /// Tool name (for tool_use blocks).
+    name: Option<String>,
+}
+
 #[derive(serde::Deserialize)]
 struct Delta {
+    /// Text content (for text blocks).
     text: Option<String>,
+    /// Partial JSON input (for tool_use blocks).
+    partial_json: Option<String>,
 }
 
 #[derive(serde::Deserialize)]

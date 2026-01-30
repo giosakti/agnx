@@ -97,14 +97,12 @@ impl SessionEvent {
     /// Convert this event to a Message if it represents a chat message.
     pub fn to_message(&self) -> Option<Message> {
         match &self.payload {
-            SessionEventPayload::UserMessage { content } => Some(Message {
-                role: Role::User,
-                content: content.clone(),
-            }),
-            SessionEventPayload::AssistantMessage { content, .. } => Some(Message {
-                role: Role::Assistant,
-                content: content.clone(),
-            }),
+            SessionEventPayload::UserMessage { content } => {
+                Some(Message::text(Role::User, content))
+            }
+            SessionEventPayload::AssistantMessage { content, .. } => {
+                Some(Message::text(Role::Assistant, content))
+            }
             _ => None,
         }
     }
@@ -199,7 +197,7 @@ mod tests {
         );
         let msg = user_event.to_message().unwrap();
         assert_eq!(msg.role, Role::User);
-        assert_eq!(msg.content, "Hello");
+        assert_eq!(msg.content_str(), "Hello");
 
         let assistant_event = SessionEvent::new(
             2,

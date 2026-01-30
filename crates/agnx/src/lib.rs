@@ -25,6 +25,7 @@ pub mod gateway;
 pub mod llm;
 pub mod sandbox;
 pub mod session;
+pub mod tools;
 
 // ============================================================================
 // Client & Utilities
