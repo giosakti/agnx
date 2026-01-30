@@ -53,10 +53,7 @@ pub fn build_system_message(agent_spec: &AgentSpec) -> Option<String> {
 pub fn build_chat_messages(system_message: Option<&str>, history: &[Message]) -> Vec<Message> {
     let mut messages = Vec::new();
     if let Some(content) = system_message {
-        messages.push(Message {
-            role: Role::System,
-            content: content.to_string(),
-        });
+        messages.push(Message::text(Role::System, content));
     }
     messages.extend(history.iter().cloned());
     messages
@@ -68,6 +65,7 @@ mod tests {
     use crate::agent::{AgentMetadata, AgentSessionConfig, ModelConfig};
     use crate::llm::Provider;
     use std::collections::HashMap;
+    use std::path::PathBuf;
 
     fn test_agent_spec(
         soul: Option<&str>,
@@ -95,6 +93,8 @@ mod tests {
             system_prompt: system_prompt.map(|s| s.to_string()),
             instructions: instructions.map(|s| s.to_string()),
             session: AgentSessionConfig::default(),
+            tools: Vec::new(),
+            agent_dir: PathBuf::from("/tmp/test-agent"),
         }
     }
 

@@ -41,31 +41,6 @@ pub struct SessionContext<'a> {
 }
 
 // ============================================================================
-// Helper Functions
-// ============================================================================
-
-/// Build a snapshot from context and current state.
-fn build_snapshot(
-    ctx: &SessionContext<'_>,
-    last_event_seq: u64,
-    conversation: Vec<Message>,
-) -> SessionSnapshot {
-    SessionSnapshot::new(
-        ctx.session_id.to_string(),
-        ctx.agent.to_string(),
-        ctx.status,
-        ctx.created_at,
-        last_event_seq,
-        conversation,
-        SessionConfig {
-            on_disconnect: ctx.on_disconnect,
-            gateway: ctx.gateway.map(String::from),
-            gateway_chat_id: ctx.gateway_chat_id.map(String::from),
-        },
-    )
-}
-
-// ============================================================================
 // Persistence Functions
 // ============================================================================
 
@@ -139,10 +114,7 @@ pub async fn persist_assistant_message(
     content: String,
     usage: Option<Usage>,
 ) -> Result<u64> {
-    let assistant_message = Message {
-        role: Role::Assistant,
-        content: content.clone(),
-    };
+    let assistant_message = Message::text(Role::Assistant, content.clone());
     sessions.add_message(session_id, assistant_message).await?;
 
     record_event(
@@ -170,4 +142,29 @@ pub async fn write_session_snapshot(ctx: &SessionContext<'_>) -> Result<()> {
         .ok_or_else(|| super::error::SessionError::NotFound(ctx.session_id.to_string()))?;
     let snapshot = build_snapshot(ctx, last_event_seq, conversation);
     write_snapshot(ctx.sessions_path, ctx.session_id, &snapshot).await
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Build a snapshot from context and current state.
+fn build_snapshot(
+    ctx: &SessionContext<'_>,
+    last_event_seq: u64,
+    conversation: Vec<Message>,
+) -> SessionSnapshot {
+    SessionSnapshot::new(
+        ctx.session_id.to_string(),
+        ctx.agent.to_string(),
+        ctx.status,
+        ctx.created_at,
+        last_event_seq,
+        conversation,
+        SessionConfig {
+            on_disconnect: ctx.on_disconnect,
+            gateway: ctx.gateway.map(String::from),
+            gateway_chat_id: ctx.gateway_chat_id.map(String::from),
+        },
+    )
 }

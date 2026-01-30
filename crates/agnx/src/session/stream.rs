@@ -270,6 +270,14 @@ impl futures::Stream for AccumulatingStream {
                 Poll::Ready(Some(Ok(event)))
             }
 
+            // ToolCalls are not handled in the current SSE stream (requires agentic loop)
+            // For now, we skip them - they'll be handled by the agentic loop in send_message
+            Poll::Ready(Some(Ok(StreamEvent::ToolCalls(_)))) => {
+                // Continue polling for next event
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+
             Poll::Ready(None) => {
                 self.finished = true;
                 self.save_accumulated();
@@ -672,6 +680,10 @@ async fn consume_stream_to_completion(
                     "Background stream cancelled (unexpected)"
                 );
                 break;
+            }
+            // ToolCalls are not handled in background stream (requires agentic loop)
+            Ok(StreamEvent::ToolCalls(_)) => {
+                // Skip tool calls in background stream for now
             }
         }
     }

@@ -64,14 +64,8 @@ mod tests {
             Utc::now(),
             42,
             vec![
-                Message {
-                    role: Role::User,
-                    content: "Hello".to_string(),
-                },
-                Message {
-                    role: Role::Assistant,
-                    content: "Hi there!".to_string(),
-                },
+                Message::text(Role::User, "Hello"),
+                Message::text(Role::Assistant, "Hi there!"),
             ],
             SessionConfig::default(),
         )
@@ -166,8 +160,8 @@ mod tests {
 
         assert_eq!(loaded.conversation.len(), 2);
         assert_eq!(loaded.conversation[0].role, Role::User);
-        assert_eq!(loaded.conversation[0].content, "Hello");
+        assert_eq!(loaded.conversation[0].content_str(), "Hello");
         assert_eq!(loaded.conversation[1].role, Role::Assistant);
-        assert_eq!(loaded.conversation[1].content, "Hi there!");
+        assert_eq!(loaded.conversation[1].content_str(), "Hi there!");
     }
 }
