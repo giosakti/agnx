@@ -11,7 +11,10 @@ use reqwest::Client;
 
 use super::error::LLMError;
 use super::provider::LLMProvider;
-use super::types::{ChatRequest, ChatResponse, ChatStream, Message, StreamEvent, Usage};
+use super::types::{
+    ChatRequest, ChatResponse, ChatStream, FunctionCall, Message, StreamEvent, ToolCall,
+    ToolDefinition, Usage,
+};
 use crate::sse::SseEventStream;
 
 /// OpenAI-compatible provider (works for OpenAI, OpenRouter, Ollama).
@@ -65,7 +68,11 @@ impl LLMProvider for OpenAICompatibleProvider {
             messages: request.messages,
             temperature: request.temperature,
             max_tokens: request.max_tokens,
+            tools: request.tools,
             stream: true,
+            stream_options: StreamOptions {
+                include_usage: true,
+            },
         };
 
         let mut req = self
@@ -105,18 +112,61 @@ struct StreamRequest {
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<ToolDefinition>>,
     stream: bool,
+    /// Request usage stats in streaming response (OpenAI/OpenRouter support).
+    stream_options: StreamOptions,
+}
+
+#[derive(serde::Serialize)]
+struct StreamOptions {
+    include_usage: bool,
 }
 
 /// Adapter that converts SSE lines into OpenAI StreamEvents.
 struct OpenAIStreamAdapter<S> {
     inner: SseEventStream<S>,
     done: bool,
+    /// Accumulated tool calls from streaming chunks.
+    /// Tool calls come in pieces: first the id and name, then arguments in chunks.
+    tool_calls: Vec<ToolCallAccumulator>,
+    /// Usage from the final chunk (when stream_options.include_usage is true).
+    usage: Option<Usage>,
+}
+
+/// Accumulates tool call data from streaming chunks.
+#[derive(Default)]
+struct ToolCallAccumulator {
+    id: String,
+    function_name: String,
+    arguments: String,
 }
 
 impl<S> OpenAIStreamAdapter<S> {
     fn new(inner: SseEventStream<S>) -> Self {
-        Self { inner, done: false }
+        Self {
+            inner,
+            done: false,
+            tool_calls: Vec::new(),
+            usage: None,
+        }
+    }
+
+    /// Convert accumulated tool calls into final ToolCall structs.
+    fn finalize_tool_calls(&mut self) -> Vec<ToolCall> {
+        std::mem::take(&mut self.tool_calls)
+            .into_iter()
+            .filter(|tc| !tc.id.is_empty())
+            .map(|tc| ToolCall {
+                id: tc.id,
+                tool_type: "function".to_string(),
+                function: FunctionCall {
+                    name: tc.function_name,
+                    arguments: tc.arguments,
+                },
+            })
+            .collect()
     }
 }
 
@@ -142,19 +192,76 @@ where
                     // Handle OpenAI's [DONE] marker
                     if data == "[DONE]" {
                         self.done = true;
-                        return Poll::Ready(Some(Ok(StreamEvent::Done { usage: None })));
+
+                        // If we accumulated tool calls, emit them before Done
+                        if !self.tool_calls.is_empty() {
+                            let tool_calls = self.finalize_tool_calls();
+                            if !tool_calls.is_empty() {
+                                return Poll::Ready(Some(Ok(StreamEvent::ToolCalls(tool_calls))));
+                            }
+                        }
+
+                        return Poll::Ready(Some(Ok(StreamEvent::Done {
+                            usage: self.usage.take(),
+                        })));
                     }
 
                     // Parse JSON chunk
                     match serde_json::from_str::<StreamChunk>(&data) {
                         Ok(chunk) => {
-                            if let Some(choice) = chunk.choices.first()
-                                && let Some(ref content) = choice.delta.content
-                                && !content.is_empty()
-                            {
-                                return Poll::Ready(Some(Ok(StreamEvent::Token(content.clone()))));
+                            // Capture usage if present (typically in final chunk)
+                            if let Some(usage) = chunk.usage {
+                                self.usage = Some(usage);
                             }
-                            // Skip chunks without content (e.g., role-only or usage-only)
+
+                            if let Some(choice) = chunk.choices.first() {
+                                // Handle content tokens
+                                if let Some(ref content) = choice.delta.content
+                                    && !content.is_empty()
+                                {
+                                    return Poll::Ready(Some(Ok(StreamEvent::Token(
+                                        content.clone(),
+                                    ))));
+                                }
+
+                                // Handle tool calls (accumulated across chunks)
+                                if let Some(ref tool_calls) = choice.delta.tool_calls {
+                                    for tc in tool_calls {
+                                        // Ensure we have enough slots
+                                        while self.tool_calls.len() <= tc.index {
+                                            self.tool_calls.push(ToolCallAccumulator::default());
+                                        }
+
+                                        let acc = &mut self.tool_calls[tc.index];
+
+                                        // ID comes in first chunk
+                                        if let Some(ref id) = tc.id {
+                                            acc.id = id.clone();
+                                        }
+
+                                        // Function name and arguments come in subsequent chunks
+                                        if let Some(ref func) = tc.function {
+                                            if let Some(ref name) = func.name {
+                                                acc.function_name = name.clone();
+                                            }
+                                            if let Some(ref args) = func.arguments {
+                                                acc.arguments.push_str(args);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Check for finish_reason "tool_calls"
+                                if choice.finish_reason.as_deref() == Some("tool_calls") {
+                                    let tool_calls = self.finalize_tool_calls();
+                                    if !tool_calls.is_empty() {
+                                        return Poll::Ready(Some(Ok(StreamEvent::ToolCalls(
+                                            tool_calls,
+                                        ))));
+                                    }
+                                }
+                            }
+                            // Skip chunks without relevant content
                         }
                         Err(e) => {
                             tracing::debug!(data = %data, error = %e, "failed to parse SSE chunk");
@@ -166,7 +273,18 @@ where
                 }
                 Poll::Ready(None) => {
                     self.done = true;
-                    return Poll::Ready(Some(Ok(StreamEvent::Done { usage: None })));
+
+                    // Emit any pending tool calls
+                    if !self.tool_calls.is_empty() {
+                        let tool_calls = self.finalize_tool_calls();
+                        if !tool_calls.is_empty() {
+                            return Poll::Ready(Some(Ok(StreamEvent::ToolCalls(tool_calls))));
+                        }
+                    }
+
+                    return Poll::Ready(Some(Ok(StreamEvent::Done {
+                        usage: self.usage.take(),
+                    })));
                 }
                 Poll::Pending => return Poll::Pending,
             }
@@ -178,18 +296,34 @@ where
 #[derive(serde::Deserialize)]
 struct StreamChunk {
     choices: Vec<StreamChoice>,
-    /// Usage is present in the API but not used during streaming.
+    /// Usage stats (present when stream_options.include_usage is true).
     #[serde(default)]
-    #[expect(dead_code, reason = "field required for serde deserialization")]
     usage: Option<Usage>,
 }
 
 #[derive(serde::Deserialize)]
 struct StreamChoice {
     delta: StreamDelta,
+    finish_reason: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
 struct StreamDelta {
     content: Option<String>,
+    tool_calls: Option<Vec<StreamToolCall>>,
+}
+
+/// Tool call chunk in streaming response.
+#[derive(serde::Deserialize)]
+struct StreamToolCall {
+    index: usize,
+    id: Option<String>,
+    function: Option<StreamFunctionCall>,
+}
+
+/// Function call chunk in streaming response.
+#[derive(serde::Deserialize)]
+struct StreamFunctionCall {
+    name: Option<String>,
+    arguments: Option<String>,
 }

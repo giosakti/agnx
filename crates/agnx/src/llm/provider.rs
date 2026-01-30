@@ -83,7 +83,7 @@ pub trait LLMProvider: Send + Sync {
         let content = response
             .choices
             .first()
-            .map(|c| c.message.content.clone())
+            .and_then(|c| c.message.content.clone())
             .unwrap_or_default();
         let usage = response.usage;
 
