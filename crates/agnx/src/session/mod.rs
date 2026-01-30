@@ -2,7 +2,9 @@
 //!
 //! v0.1.0: In-memory session store.
 //! v0.2.0: Persistent storage with JSONL event log + YAML snapshots.
+//! v0.4.0: Agentic loop for tool-using agents.
 
+mod agentic;
 mod chat_request;
 mod error;
 mod event_reader;
@@ -37,6 +39,9 @@ pub use resume::{ResumedSession, resume_session};
 // Chat and streaming
 pub use chat_request::{build_chat_messages, build_chat_request, build_system_message};
 pub use stream::{AccumulatingStream, StreamConfig};
+
+// Agentic loop
+pub use agentic::{AgenticError, AgenticResult, run_agentic_loop};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -307,27 +312,21 @@ mod tests {
         let store = SessionStore::new();
         let session = store.create("test-agent").await;
 
-        let msg = Message {
-            role: Role::User,
-            content: "Hello".to_string(),
-        };
+        let msg = Message::text(Role::User, "Hello");
 
         let result = store.add_message(&session.id, msg).await;
         assert!(result.is_ok());
 
         let messages = store.get_messages(&session.id).await.unwrap();
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].content, "Hello");
+        assert_eq!(messages[0].content_str(), "Hello");
         assert_eq!(messages[0].role, Role::User);
     }
 
     #[tokio::test]
     async fn add_message_to_nonexistent_session() {
         let store = SessionStore::new();
-        let msg = Message {
-            role: Role::User,
-            content: "Hello".to_string(),
-        };
+        let msg = Message::text(Role::User, "Hello");
 
         let result = store.add_message("nonexistent", msg).await;
         assert!(result.is_err());
@@ -373,10 +372,7 @@ mod tests {
             updated_at: now,
             last_event_seq: 7,
         };
-        let messages = vec![Message {
-            role: Role::User,
-            content: "Previous message".to_string(),
-        }];
+        let messages = vec![Message::text(Role::User, "Previous message")];
 
         store.register(session, messages).await;
 
@@ -390,6 +386,6 @@ mod tests {
 
         let fetched_messages = store.get_messages("session_recovered123").await.unwrap();
         assert_eq!(fetched_messages.len(), 1);
-        assert_eq!(fetched_messages[0].content, "Previous message");
+        assert_eq!(fetched_messages[0].content_str(), "Previous message");
     }
 }
