@@ -23,7 +23,7 @@ pub use error::{Result, SessionError};
 pub use events::{
     ApprovalDecisionType, SessionEndReason, SessionEvent, SessionEventPayload, ToolResultData,
 };
-pub use snapshot::{APPROVAL_TIMEOUT_SECONDS, PendingApproval, SessionConfig, SessionSnapshot};
+pub use snapshot::{PendingApproval, SessionConfig, SessionSnapshot};
 
 // Event I/O
 pub use event_reader::EventReader;

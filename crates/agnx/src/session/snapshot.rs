@@ -4,17 +4,17 @@
 //! at a point in time. Combined with the event log, they enable fast resume
 //! without replaying the entire event history.
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::OnDisconnect;
 use crate::api::SessionStatus;
 use crate::llm::Message;
 
-/// Default approval timeout in seconds.
-pub const APPROVAL_TIMEOUT_SECONDS: i64 = 300;
-
 /// A pending approval waiting for user decision.
+///
+/// Approvals have no timeout — they wait indefinitely until the user
+/// approves, denies, or sends a new message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingApproval {
     /// The tool call ID that needs approval.
@@ -25,16 +25,12 @@ pub struct PendingApproval {
     pub arguments: serde_json::Value,
     /// The command being approved (for display).
     pub command: String,
-    /// When the approval was requested.
-    pub created_at: DateTime<Utc>,
-    /// When the approval expires.
-    pub expires_at: DateTime<Utc>,
     /// Accumulated messages to restore when resuming the loop.
     pub messages: Vec<Message>,
 }
 
 impl PendingApproval {
-    /// Create a new pending approval with default timeout.
+    /// Create a new pending approval.
     pub fn new(
         call_id: String,
         tool_name: String,
@@ -42,21 +38,13 @@ impl PendingApproval {
         command: String,
         messages: Vec<Message>,
     ) -> Self {
-        let now = Utc::now();
         Self {
             call_id,
             tool_name,
             arguments,
             command,
-            created_at: now,
-            expires_at: now + Duration::seconds(APPROVAL_TIMEOUT_SECONDS),
             messages,
         }
-    }
-
-    /// Check if this approval has expired.
-    pub fn is_expired(&self) -> bool {
-        Utc::now() > self.expires_at
     }
 }
 
@@ -256,23 +244,5 @@ mod tests {
         assert_eq!(parsed.call_id, "call_123");
         assert_eq!(parsed.tool_name, "bash");
         assert_eq!(parsed.command, "ls -la");
-        assert!(!parsed.is_expired());
-    }
-
-    #[test]
-    fn pending_approval_expiry() {
-        let mut pending = PendingApproval::new(
-            "call_123".to_string(),
-            "bash".to_string(),
-            serde_json::json!({}),
-            "ls".to_string(),
-            vec![],
-        );
-
-        assert!(!pending.is_expired());
-
-        // Set expires_at to the past
-        pending.expires_at = Utc::now() - Duration::minutes(1);
-        assert!(pending.is_expired());
     }
 }

@@ -58,8 +58,6 @@ pub enum SessionEventPayload {
         call_id: String,
         decision: ApprovalDecisionType,
     },
-    /// Approval request timed out without user response.
-    ApprovalTimeout { call_id: String, command: String },
     /// Session status changed.
     StatusChange {
         from: SessionStatus,
