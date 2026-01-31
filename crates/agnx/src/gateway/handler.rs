@@ -61,6 +61,19 @@ impl RoutingConfig {
 // Gateway Message Handler
 // ============================================================================
 
+/// Configuration for creating a gateway message handler.
+pub struct GatewayHandlerConfig {
+    pub agents: AgentStore,
+    pub providers: ProviderRegistry,
+    pub sessions: SessionStore,
+    pub sessions_path: PathBuf,
+    pub routing_config: RoutingConfig,
+    pub sandbox: Arc<dyn Sandbox>,
+    pub gateway_manager: GatewayManager,
+    pub session_locks: SessionLocks,
+    pub policy_locks: PolicyLocks,
+}
+
 /// Handler that routes gateway messages to sessions.
 pub struct GatewayMessageHandler {
     agents: AgentStore,
@@ -83,28 +96,18 @@ pub struct GatewayMessageHandler {
 
 impl GatewayMessageHandler {
     /// Create a new gateway message handler.
-    pub fn new(
-        agents: AgentStore,
-        providers: ProviderRegistry,
-        sessions: SessionStore,
-        sessions_path: PathBuf,
-        routing_config: RoutingConfig,
-        sandbox: Arc<dyn Sandbox>,
-        gateway_manager: GatewayManager,
-        session_locks: SessionLocks,
-        policy_locks: PolicyLocks,
-    ) -> Self {
+    pub fn new(config: GatewayHandlerConfig) -> Self {
         Self {
-            agents,
-            providers,
-            sessions,
-            sessions_path,
+            agents: config.agents,
+            providers: config.providers,
+            sessions: config.sessions,
+            sessions_path: config.sessions_path,
             chat_sessions: Arc::new(RwLock::new(HashMap::new())),
-            routing_config,
-            sandbox,
-            gateway_manager,
-            session_locks,
-            policy_locks,
+            routing_config: config.routing_config,
+            sandbox: config.sandbox,
+            gateway_manager: config.gateway_manager,
+            session_locks: config.session_locks,
+            policy_locks: config.policy_locks,
         }
     }
 
@@ -633,8 +636,8 @@ impl MessageHandler for GatewayMessageHandler {
         };
 
         // If allow_always, save pattern to policy.local.yaml
-        if decision_type == ApprovalDecisionType::AllowAlways {
-            if let Err(e) = crate::agent::ToolPolicy::add_pattern_and_save(
+        if decision_type == ApprovalDecisionType::AllowAlways
+            && let Err(e) = crate::agent::ToolPolicy::add_pattern_and_save(
                 &agent.policy,
                 &agent.agent_dir,
                 &session.agent,
@@ -643,13 +646,12 @@ impl MessageHandler for GatewayMessageHandler {
                 &self.policy_locks,
             )
             .await
-            {
-                debug!(
-                    error = %e,
-                    command = %pending.command,
-                    "Failed to save allow pattern to policy.local.yaml"
-                );
-            }
+        {
+            debug!(
+                error = %e,
+                command = %pending.command,
+                "Failed to save allow pattern to policy.local.yaml"
+            );
         }
 
         // Determine tool result based on decision

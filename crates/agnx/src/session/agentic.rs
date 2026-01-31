@@ -215,8 +215,8 @@ pub async fn run_agentic_loop(
                 Ok(r) => r,
                 Err(ToolError::ApprovalRequired { call_id, command }) => {
                     // Record partial assistant content if any (before tool call)
-                    if !content.is_empty() {
-                        if let Err(e) = record_event(
+                    if !content.is_empty()
+                        && let Err(e) = record_event(
                             &ctx.sessions,
                             &ctx.sessions_path,
                             &ctx.session_id,
@@ -228,9 +228,8 @@ pub async fn run_agentic_loop(
                             &ctx.session_locks,
                         )
                         .await
-                        {
-                            warn!(error = %e, "Failed to record partial assistant message");
-                        }
+                    {
+                        warn!(error = %e, "Failed to record partial assistant message");
                     }
 
                     // Record approval required event

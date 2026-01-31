@@ -230,11 +230,28 @@ pub struct ApproveCommandRequest {
 }
 
 /// Response from approving a command.
+///
+/// Can be either a completion (agent finished responding) or another
+/// pending approval (agent needs to run another tool).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApproveCommandResponse {
-    pub session_id: String,
-    pub call_id: String,
-    pub decision: ApprovalDecision,
+#[serde(tag = "status")]
+pub enum ApproveCommandResponse {
+    /// Agent completed its response.
+    #[serde(rename = "complete")]
+    Complete {
+        /// The message ID of the response.
+        message_id: String,
+        /// The agent's response content.
+        content: String,
+    },
+    /// Another tool needs approval.
+    #[serde(rename = "pending_approval")]
+    PendingApproval {
+        /// The tool call ID that needs approval.
+        call_id: String,
+        /// The command that needs approval.
+        command: String,
+    },
 }
 
 /// SSE payload for approval_required event.

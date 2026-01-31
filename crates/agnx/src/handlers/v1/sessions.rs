@@ -426,8 +426,8 @@ pub async fn approve_command(
     };
 
     // If allow_always, save pattern to policy.local.yaml
-    if req.decision == ApprovalDecision::AllowAlways {
-        if let Err(e) = crate::agent::ToolPolicy::add_pattern_and_save(
+    if req.decision == ApprovalDecision::AllowAlways
+        && let Err(e) = crate::agent::ToolPolicy::add_pattern_and_save(
             &agent_spec.policy,
             &agent_spec.agent_dir,
             &session.agent,
@@ -436,13 +436,12 @@ pub async fn approve_command(
             &state.policy_locks,
         )
         .await
-        {
-            debug!(
-                error = %e,
-                command = %req.command,
-                "Failed to save allow pattern to policy.local.yaml"
-            );
-        }
+    {
+        debug!(
+            error = %e,
+            command = %req.command,
+            "Failed to save allow pattern to policy.local.yaml"
+        );
     }
 
     // Determine tool result based on decision
@@ -731,12 +730,24 @@ async fn handle_agentic_result(
                 crate::api::MESSAGE_ID_PREFIX,
                 Uuid::new_v4().simple()
             );
-            let response = SendMessageResponse {
-                message_id,
-                role: "assistant".to_string(),
-                content,
-            };
-            (StatusCode::OK, Json(response)).into_response()
+
+            // Return different response types based on context
+            if is_resume {
+                // For approve_command, return ApproveCommandResponse
+                let response = crate::api::ApproveCommandResponse::Complete {
+                    message_id,
+                    content,
+                };
+                (StatusCode::OK, Json(response)).into_response()
+            } else {
+                // For send_message, return SendMessageResponse
+                let response = SendMessageResponse {
+                    message_id,
+                    role: "assistant".to_string(),
+                    content,
+                };
+                (StatusCode::OK, Json(response)).into_response()
+            }
         }
 
         AgenticResult::AwaitingApproval { pending, .. } => {
@@ -763,12 +774,23 @@ async fn handle_agentic_result(
                 .set_status(session_id, SessionStatus::Paused)
                 .await;
 
-            let response = PendingApprovalResponse {
-                session_id: session_id.to_string(),
-                call_id: pending.call_id,
-                command: pending.command,
-            };
-            (StatusCode::ACCEPTED, Json(response)).into_response()
+            // Return different response types based on context
+            if is_resume {
+                // For approve_command, return ApproveCommandResponse
+                let response = crate::api::ApproveCommandResponse::PendingApproval {
+                    call_id: pending.call_id,
+                    command: pending.command,
+                };
+                (StatusCode::ACCEPTED, Json(response)).into_response()
+            } else {
+                // For send_message, return PendingApprovalResponse
+                let response = PendingApprovalResponse {
+                    session_id: session_id.to_string(),
+                    call_id: pending.call_id,
+                    command: pending.command,
+                };
+                (StatusCode::ACCEPTED, Json(response)).into_response()
+            }
         }
     }
 }

@@ -50,7 +50,7 @@ pub use agnx_gateway_protocol::{
     RoutingContext, Sender, capabilities, error_codes,
 };
 
-pub use handler::{GatewayMessageHandler, RoutingConfig};
+pub use handler::{GatewayHandlerConfig, GatewayMessageHandler, RoutingConfig};
 pub use manager::{
     GatewayHandle, GatewayManager, MessageHandler, SendError, build_approval_keyboard,
 };
