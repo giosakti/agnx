@@ -10,7 +10,8 @@ use tokio::sync::RwLock;
 use super::bash;
 use super::cli;
 use super::error::ToolError;
-use crate::agent::ToolConfig;
+use super::notify::send_notification;
+use crate::agent::{NotifyConfig, PolicyDecision, ToolConfig, ToolPolicy, ToolType};
 use crate::llm::{FunctionDefinition, ToolCall, ToolDefinition};
 use crate::sandbox::{ExecResult, Sandbox};
 
@@ -52,18 +53,6 @@ impl ToolResult {
     }
 }
 
-/// Generate a fallback definition for an unknown builtin.
-fn unknown_builtin_definition(name: &str) -> ToolDefinition {
-    ToolDefinition {
-        tool_type: "function".to_string(),
-        function: FunctionDefinition {
-            name: name.to_string(),
-            description: format!("Built-in tool: {}", name),
-            parameters: None,
-        },
-    }
-}
-
 // ============================================================================
 // Executor
 // ============================================================================
@@ -78,11 +67,25 @@ pub struct ToolExecutor {
     agent_dir: PathBuf,
     /// Cached README content by tool name.
     readme_cache: RwLock<HashMap<String, String>>,
+    /// Tool policy for command filtering.
+    policy: ToolPolicy,
+    /// Notification configuration.
+    notify_config: NotifyConfig,
+    /// Session ID for notifications (optional).
+    session_id: Option<String>,
+    /// Agent name for notifications.
+    agent_name: String,
 }
 
 impl ToolExecutor {
     /// Create a new tool executor.
-    pub fn new(tools: Vec<ToolConfig>, sandbox: Arc<dyn Sandbox>, agent_dir: PathBuf) -> Self {
+    pub fn new(
+        tools: Vec<ToolConfig>,
+        sandbox: Arc<dyn Sandbox>,
+        agent_dir: PathBuf,
+        policy: ToolPolicy,
+        agent_name: String,
+    ) -> Self {
         let tools_map = tools
             .into_iter()
             .map(|tc| {
@@ -94,15 +97,32 @@ impl ToolExecutor {
             })
             .collect();
 
+        let notify_config = policy.notify.clone();
+
         Self {
             tools: tools_map,
             sandbox,
             agent_dir,
             readme_cache: RwLock::new(HashMap::new()),
+            policy,
+            notify_config,
+            session_id: None,
+            agent_name,
         }
     }
 
+    /// Set the session ID for notifications.
+    pub fn with_session_id(mut self, session_id: String) -> Self {
+        self.session_id = Some(session_id);
+        self
+    }
+
     /// Execute a tool call and return the result.
+    ///
+    /// Checks policy before execution:
+    /// - If denied by policy, returns `PolicyDenied` error
+    /// - If approval required (ask mode), returns `ApprovalRequired` error
+    /// - If allowed, executes and optionally sends notifications
     pub async fn execute(&self, tool_call: &ToolCall) -> Result<ToolResult, ToolError> {
         let tool_name = &tool_call.function.name;
         let config = self
@@ -110,7 +130,75 @@ impl ToolExecutor {
             .get(tool_name)
             .ok_or_else(|| ToolError::NotFound(tool_name.clone()))?;
 
-        match config {
+        // Determine tool type and invocation string for policy check
+        let (tool_type, invocation) = match config {
+            ToolConfig::Builtin { name } if name == "bash" => {
+                // For bash, extract the command from arguments
+                let command = extract_bash_command(&tool_call.function.arguments);
+                (ToolType::Bash, command)
+            }
+            ToolConfig::Builtin { name } => (ToolType::Builtin, name.clone()),
+            ToolConfig::Cli { name, .. } => (ToolType::Builtin, name.clone()),
+        };
+
+        // Check policy
+        match self.policy.check(tool_type, &invocation) {
+            PolicyDecision::Deny => {
+                return Err(ToolError::PolicyDenied(invocation));
+            }
+            PolicyDecision::Ask => {
+                return Err(ToolError::ApprovalRequired {
+                    call_id: tool_call.id.clone(),
+                    command: invocation,
+                });
+            }
+            PolicyDecision::Allow => {
+                // Continue with execution
+            }
+        }
+
+        self.execute_tool(tool_call, config, tool_type, &invocation)
+            .await
+    }
+
+    /// Execute a tool call bypassing policy checks.
+    ///
+    /// Use this only for calls that have already been approved through the
+    /// approval flow. Skips policy.check() but still executes the tool and
+    /// sends notifications.
+    pub async fn execute_bypassing_policy(
+        &self,
+        tool_call: &ToolCall,
+    ) -> Result<ToolResult, ToolError> {
+        let tool_name = &tool_call.function.name;
+        let config = self
+            .tools
+            .get(tool_name)
+            .ok_or_else(|| ToolError::NotFound(tool_name.clone()))?;
+
+        // Determine tool type and invocation string (for notifications)
+        let (tool_type, invocation) = match config {
+            ToolConfig::Builtin { name } if name == "bash" => {
+                let command = extract_bash_command(&tool_call.function.arguments);
+                (ToolType::Bash, command)
+            }
+            ToolConfig::Builtin { name } => (ToolType::Builtin, name.clone()),
+            ToolConfig::Cli { name, .. } => (ToolType::Builtin, name.clone()),
+        };
+
+        self.execute_tool(tool_call, config, tool_type, &invocation)
+            .await
+    }
+
+    /// Internal: execute tool and send notifications.
+    async fn execute_tool(
+        &self,
+        tool_call: &ToolCall,
+        config: &ToolConfig,
+        tool_type: ToolType,
+        invocation: &str,
+    ) -> Result<ToolResult, ToolError> {
+        let result = match config {
             ToolConfig::Builtin { name } if name == "bash" => {
                 bash::execute(
                     &self.sandbox,
@@ -131,7 +219,23 @@ impl ToolExecutor {
                 )
                 .await
             }
+        };
+
+        // Send notification if configured
+        if self.policy.should_notify(tool_type, invocation) {
+            let session_id = self.session_id.as_deref().unwrap_or("unknown");
+            let success = result.as_ref().map(|r| r.success).unwrap_or(false);
+            send_notification(
+                &self.notify_config,
+                session_id,
+                &self.agent_name,
+                invocation,
+                success,
+            )
+            .await;
         }
+
+        result
     }
 
     /// Generate tool definitions for the LLM.
@@ -185,6 +289,34 @@ impl ToolExecutor {
     }
 }
 
+// ============================================================================
+// Private Helpers
+// ============================================================================
+
+/// Generate a fallback definition for an unknown builtin.
+fn unknown_builtin_definition(name: &str) -> ToolDefinition {
+    ToolDefinition {
+        tool_type: "function".to_string(),
+        function: FunctionDefinition {
+            name: name.to_string(),
+            description: format!("Built-in tool: {}", name),
+            parameters: None,
+        },
+    }
+}
+
+/// Extract the command string from bash tool arguments.
+fn extract_bash_command(arguments: &str) -> String {
+    #[derive(serde::Deserialize)]
+    struct BashArgs {
+        command: String,
+    }
+
+    serde_json::from_str::<BashArgs>(arguments)
+        .map(|args| args.command)
+        .unwrap_or_else(|_| arguments.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,12 +325,24 @@ mod tests {
 
     fn test_executor(tools: Vec<ToolConfig>) -> ToolExecutor {
         let sandbox = Arc::new(TrustSandbox);
-        ToolExecutor::new(tools, sandbox, std::path::PathBuf::from("/tmp"))
+        ToolExecutor::new(
+            tools,
+            sandbox,
+            std::path::PathBuf::from("/tmp"),
+            ToolPolicy::default(),
+            "test-agent".to_string(),
+        )
     }
 
     fn test_executor_with_dir(tools: Vec<ToolConfig>, dir: &TempDir) -> ToolExecutor {
         let sandbox = Arc::new(TrustSandbox);
-        ToolExecutor::new(tools, sandbox, dir.path().to_path_buf())
+        ToolExecutor::new(
+            tools,
+            sandbox,
+            dir.path().to_path_buf(),
+            ToolPolicy::default(),
+            "test-agent".to_string(),
+        )
     }
 
     #[test]
