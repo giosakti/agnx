@@ -8,7 +8,9 @@ mod cli;
 mod error;
 mod executor;
 mod notify;
+pub mod schedule;
 
 pub use error::ToolError;
 pub use executor::{ToolExecutor, ToolResult};
 pub use notify::send_notification;
+pub use schedule::ToolExecutionContext;

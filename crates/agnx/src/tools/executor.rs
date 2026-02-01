@@ -11,9 +11,11 @@ use super::bash;
 use super::cli;
 use super::error::ToolError;
 use super::notify::send_notification;
+use super::schedule::{self, ToolExecutionContext};
 use crate::agent::{NotifyConfig, PolicyDecision, ToolConfig, ToolPolicy, ToolType};
 use crate::llm::{FunctionDefinition, ToolCall, ToolDefinition};
 use crate::sandbox::{ExecResult, Sandbox};
+use crate::scheduler::SchedulerHandle;
 
 // ============================================================================
 // Types
@@ -75,6 +77,10 @@ pub struct ToolExecutor {
     session_id: Option<String>,
     /// Agent name for notifications.
     agent_name: String,
+    /// Scheduler handle for schedule tools (optional).
+    scheduler: Option<SchedulerHandle>,
+    /// Execution context for schedule tools (gateway, chat_id, etc.).
+    execution_context: Option<ToolExecutionContext>,
 }
 
 impl ToolExecutor {
@@ -108,12 +114,26 @@ impl ToolExecutor {
             notify_config,
             session_id: None,
             agent_name,
+            scheduler: None,
+            execution_context: None,
         }
     }
 
     /// Set the session ID for notifications.
     pub fn with_session_id(mut self, session_id: String) -> Self {
         self.session_id = Some(session_id);
+        self
+    }
+
+    /// Set the scheduler handle for schedule tools.
+    pub fn with_scheduler(mut self, scheduler: SchedulerHandle) -> Self {
+        self.scheduler = Some(scheduler);
+        self
+    }
+
+    /// Set the execution context for schedule tools.
+    pub fn with_execution_context(mut self, ctx: ToolExecutionContext) -> Self {
+        self.execution_context = Some(ctx);
         self
     }
 
@@ -207,6 +227,18 @@ impl ToolExecutor {
                 )
                 .await
             }
+            ToolConfig::Builtin { name } if name == "schedule_task" => {
+                self.execute_schedule_tool(name, &tool_call.function.arguments)
+                    .await
+            }
+            ToolConfig::Builtin { name } if name == "list_schedules" => {
+                self.execute_schedule_tool(name, &tool_call.function.arguments)
+                    .await
+            }
+            ToolConfig::Builtin { name } if name == "cancel_schedule" => {
+                self.execute_schedule_tool(name, &tool_call.function.arguments)
+                    .await
+            }
             ToolConfig::Builtin { name } => {
                 Err(ToolError::NotFound(format!("unknown builtin: {}", name)))
             }
@@ -244,12 +276,47 @@ impl ToolExecutor {
             .values()
             .map(|config| match config {
                 ToolConfig::Builtin { name } if name == "bash" => bash::definition(),
+                ToolConfig::Builtin { name } if name == "schedule_task" => {
+                    schedule::schedule_task_definition()
+                }
+                ToolConfig::Builtin { name } if name == "list_schedules" => {
+                    schedule::list_schedules_definition()
+                }
+                ToolConfig::Builtin { name } if name == "cancel_schedule" => {
+                    schedule::cancel_schedule_definition()
+                }
                 ToolConfig::Builtin { name } => unknown_builtin_definition(name),
                 ToolConfig::Cli {
                     name, description, ..
                 } => cli::definition(name, description.as_deref()),
             })
             .collect()
+    }
+
+    /// Execute a schedule-related tool.
+    async fn execute_schedule_tool(
+        &self,
+        name: &str,
+        arguments: &str,
+    ) -> Result<ToolResult, ToolError> {
+        let scheduler = self
+            .scheduler
+            .as_ref()
+            .ok_or_else(|| ToolError::ExecutionFailed("Scheduler not available".to_string()))?;
+
+        let ctx = self.execution_context.as_ref().ok_or_else(|| {
+            ToolError::ExecutionFailed("Execution context not available".to_string())
+        })?;
+
+        match name {
+            "schedule_task" => schedule::execute_schedule_task(scheduler, ctx, arguments).await,
+            "list_schedules" => schedule::execute_list_schedules(scheduler, ctx).await,
+            "cancel_schedule" => schedule::execute_cancel_schedule(scheduler, ctx, arguments).await,
+            _ => Err(ToolError::NotFound(format!(
+                "unknown schedule tool: {}",
+                name
+            ))),
+        }
     }
 
     /// Load and cache the README for a tool.
