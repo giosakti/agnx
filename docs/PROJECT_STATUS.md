@@ -3,7 +3,7 @@
 > **Purpose:** Living status + session context. The stable vision and principles live in the [Project Charter](./202601111100.project-charter.md).
 
 ## Last Updated
-2026-01-29
+2026-02-01
 
 ## Strategic Direction
 
@@ -45,6 +45,7 @@ Key specs and design docs:
 | Agent routing | Routing table (first match wins) | Flexible, extensible; user controls specificity via ordering |
 | Session compaction | Auto-compact after N events; archive old events | Prevents unbounded storage growth |
 | Tool approval | Optional approval workflow for dangerous tools | Safety without sacrificing autonomy |
+| Scheduled tasks | Agent-initiated via tools; YAML persistence | Agents can create reminders and recurring checks autonomously |
 | Observability | Structured logging (JSON); metrics + tracing planned | Debug + monitor from day one |
 
 ## Roadmap / Milestones
@@ -71,25 +72,34 @@ Key specs and design docs:
 - [x] Plugin configuration in agnx.yaml
 - [x] Trust mode (no isolation) — sandbox placeholder
 
-### v0.4.0 — Tools & Memory
-- [ ] CLI tool support (lightweight alternative to MCP)
-- [ ] MCP tool integration
+### v0.4.0 — Tools, Policy, Scheduling, and Memory
+- [x] Built-in bash tool
+- [x] CLI tool support (lightweight alternative to MCP)
+- [x] Tool execution policies (dangerous/ask/restrict modes, allow/deny lists)
+- [x] Scheduled tasks (one-shot, interval, cron)
+- [x] Schedule tools (`schedule_task`, `list_schedules`, `cancel_schedule`)
+- [x] Shared session cache for gateway/scheduler coordination
 - [ ] File-based memory bank
-- [ ] Agent export/import
-- [ ] CLI: `agnx export`, `agnx import`
 
-### v0.5.0 — Sandbox
+### v0.5.0 — Context & Observability
+- [ ] Context window management
+- [ ] Structured logging improvements
+- [ ] Metrics (OpenTelemetry)
+- [ ] Tracing
+
+### v0.6.0 — Sandbox
 - [ ] Sandbox interface + auto-selection
 - [ ] bubblewrap backend (Linux)
 - [ ] Docker backend (cross-platform fallback)
 
-### v0.6.0 — External Backends & More Gateways
+### v0.7.0 — External Backends & Gateways
 - [ ] Services: PostgreSQL backend
 - [ ] Services: Redis backend
 - [ ] Services: S3 backend
 - [ ] First-party plugin: agnx-gateway-whatsapp
 
-### v0.7.0 — Agent Orchestration
+### v0.8.0 — Agent Orchestration
+- [ ] MCP tool integration
 - [ ] Built-in tool: `claude_code_exec` (invoke Claude Code headless)
 - [ ] Built-in tool: `opencode_exec` (invoke OpenCode headless)
 - [ ] Supervisor agent pattern (review worker output before committing)
@@ -97,7 +107,8 @@ Key specs and design docs:
 - [ ] Async notifications (Slack, email, webhook)
 - [ ] Inbound webhooks (trigger agent from external events like GitHub, CI)
 
-### v0.8.0 — Production Ready
+### v0.9.0 — Production Ready
+- [ ] Agent export/import
 - [ ] Comprehensive test suite
 - [ ] Full documentation (incl. OpenAPI)
 - [ ] Performance benchmarks
@@ -107,7 +118,6 @@ Key specs and design docs:
 - [ ] Stable API (no breaking changes)
 - [ ] Published to package managers (cargo, homebrew, apt)
 - [ ] Helm chart for Kubernetes
-- [ ] Community contributions welcome
 
 ### Future — Edge & Embedded
 - [ ] ARM64 + x86_64 builds
@@ -118,9 +128,28 @@ Key specs and design docs:
 
 ## Current Focus
 
-**v0.3.0 — Gateway Plugins**: Complete. Ready for release.
+**v0.4.0 — Tools, Policy, Scheduling, and Memory**: Tools and scheduling complete. Memory remaining.
 
 ## Recent Accomplishments
+
+- **Tool execution policies** — Configurable policies for tool safety
+  - Three modes: `dangerous` (trust all), `ask` (approval for unknown), `restrict` (allow-list only)
+  - Typed allow/deny patterns (e.g., `bash:cargo*`, `mcp:github:*`)
+  - Air-gap deny list always takes precedence
+  - Policy merging (`policy.yaml` base + `policy.local.yaml` overrides)
+  - Notification support for tool execution (log, webhook)
+
+- **CLI tool support** — Agents can define custom script tools
+  - Lightweight alternative to MCP for simple integrations
+  - README-based documentation loaded on-demand
+
+- **Scheduled tasks** — Agents can create time-based triggers via tool calls
+  - One-shot (`at`), interval (`every`), and cron expression timing
+  - Message payload (direct send) or task payload (execute with tools, summarize results)
+  - YAML persistence (`.agnx/schedules/{id}.yaml`) with JSONL run logs
+  - Retry with exponential backoff and jitter for transient failures
+  - Shared `ChatSessionCache` enables scheduled task results to appear in same conversation
+  - Schedule tools: `schedule_task`, `list_schedules`, `cancel_schedule`
 
 - **v0.3.0 complete** — Gateway Plugins
 - Added trust mode sandbox (`Sandbox` trait + `TrustSandbox` implementation) as placeholder for tool execution
@@ -154,8 +183,7 @@ Key specs and design docs:
 
 ## Next Action
 
-- Release v0.3.0
-- Begin v0.4.0: CLI tool support, MCP integration, memory
+- Continue v0.4.0: CLI tool support, MCP integration, memory
 
 ## Blockers / Known Issues / Decisions Needed
 
