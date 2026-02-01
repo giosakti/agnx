@@ -145,7 +145,7 @@ impl GatewayManager {
             return Err(SendError::ChannelClosed);
         };
 
-        let request_id = uuid::Uuid::new_v4().to_string();
+        let request_id = ulid::Ulid::new().to_string();
         let command = GatewayCommand::SendMessage {
             request_id,
             chat_id: chat_id.to_string(),
@@ -195,7 +195,7 @@ impl GatewayManager {
             return Err(SendError::ChannelClosed);
         };
 
-        let request_id = uuid::Uuid::new_v4().to_string();
+        let request_id = ulid::Ulid::new().to_string();
         let command = GatewayCommand::AnswerCallbackQuery {
             request_id,
             callback_query_id: callback_query_id.to_string(),

@@ -11,7 +11,7 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
-use uuid::Uuid;
+use ulid::Ulid;
 
 use crate::agent::{AgentSpec, OnDisconnect};
 use crate::api::{
@@ -216,11 +216,7 @@ pub async fn send_message(
     }
 
     let response = SendMessageResponse {
-        message_id: format!(
-            "{}{}",
-            crate::api::MESSAGE_ID_PREFIX,
-            Uuid::new_v4().simple()
-        ),
+        message_id: format!("{}{}", crate::api::MESSAGE_ID_PREFIX, Ulid::new()),
         role: "assistant".to_string(),
         content: assistant_content,
     };
@@ -313,11 +309,7 @@ pub async fn stream_session(
         }
     };
 
-    let message_id = format!(
-        "{}{}",
-        crate::api::MESSAGE_ID_PREFIX,
-        Uuid::new_v4().simple()
-    );
+    let message_id = format!("{}{}", crate::api::MESSAGE_ID_PREFIX, Ulid::new());
     let cancel_token = CancellationToken::new();
 
     debug!(
@@ -725,11 +717,7 @@ async fn handle_agentic_result(
                     .await;
             }
 
-            let message_id = format!(
-                "{}{}",
-                crate::api::MESSAGE_ID_PREFIX,
-                Uuid::new_v4().simple()
-            );
+            let message_id = format!("{}{}", crate::api::MESSAGE_ID_PREFIX, Ulid::new());
 
             // Return different response types based on context
             if is_resume {

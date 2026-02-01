@@ -56,7 +56,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use tokio::sync::{Mutex, RwLock};
-use uuid::Uuid;
+use ulid::Ulid;
 
 use crate::api::SessionStatus;
 use crate::llm::Message;
@@ -138,11 +138,7 @@ impl SessionStore {
     pub async fn create(&self, agent: &str) -> Arc<Session> {
         let now = Utc::now();
         let session = Arc::new(Session {
-            id: format!(
-                "{}{}",
-                crate::api::SESSION_ID_PREFIX,
-                Uuid::new_v4().simple()
-            ),
+            id: format!("{}{}", crate::api::SESSION_ID_PREFIX, Ulid::new()),
             agent: agent.to_string(),
             status: SessionStatus::Active,
             created_at: now,
