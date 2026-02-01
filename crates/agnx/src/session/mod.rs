@@ -6,6 +6,7 @@
 
 mod agentic;
 mod chat_request;
+mod chat_session_cache;
 mod error;
 mod event_reader;
 mod event_writer;
@@ -19,6 +20,7 @@ mod snapshot_writer;
 mod stream;
 
 // Types and errors
+pub use chat_session_cache::ChatSessionCache;
 pub use error::{Result, SessionError};
 pub use events::{
     ApprovalDecisionType, SessionEndReason, SessionEvent, SessionEventPayload, ToolResultData,
@@ -54,7 +56,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use tokio::sync::{Mutex, RwLock};
-use uuid::Uuid;
+use ulid::Ulid;
 
 use crate::api::SessionStatus;
 use crate::llm::Message;
@@ -136,11 +138,7 @@ impl SessionStore {
     pub async fn create(&self, agent: &str) -> Arc<Session> {
         let now = Utc::now();
         let session = Arc::new(Session {
-            id: format!(
-                "{}{}",
-                crate::api::SESSION_ID_PREFIX,
-                Uuid::new_v4().simple()
-            ),
+            id: format!("{}{}", crate::api::SESSION_ID_PREFIX, Ulid::new()),
             agent: agent.to_string(),
             status: SessionStatus::Active,
             created_at: now,

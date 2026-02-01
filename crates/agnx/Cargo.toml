@@ -44,10 +44,12 @@ serde-saphyr = { workspace = true }
 
 # Utilities
 chrono = { workspace = true }
+cron = { workspace = true }
 dashmap = { workspace = true }
+rand = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-uuid = { workspace = true }
+ulid = { workspace = true }
 
 # Unix-specific (for prctl on Linux)
 [target.'cfg(unix)'.dependencies]
