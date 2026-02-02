@@ -576,7 +576,7 @@ impl MessageHandler for GatewayMessageHandler {
         // Acquire session lock to prevent concurrent approval callbacks from racing.
         // This prevents duplicate command execution if Telegram retries the callback.
         let approval_lock = self.session_locks.get(&session_id);
-        let _approval_guard = approval_lock.lock().await;
+        let approval_guard = approval_lock.lock().await;
 
         // Verify session exists
         let session = match self.sessions.get(&session_id).await {
@@ -718,6 +718,10 @@ impl MessageHandler for GatewayMessageHandler {
         if let Err(e) = clear_pending_approval_internal(&self.sessions_path, &session_id).await {
             debug!(error = %e, "Failed to clear pending approval");
         }
+
+        // Release the approval lock before resuming agentic loop.
+        // The loop and result handler need to acquire their own locks for persistence.
+        drop(approval_guard);
 
         // Get provider for resuming the loop
         let provider = match self
