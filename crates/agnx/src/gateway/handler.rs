@@ -307,6 +307,7 @@ impl GatewayMessageHandler {
                 &agent.model.name,
                 agent.model.temperature,
                 agent.model.max_output_tokens,
+                vec![],
             );
 
         let response = match provider.chat(chat_request).await {
@@ -391,6 +392,7 @@ impl GatewayMessageHandler {
                 &agent.model.name,
                 agent.model.temperature,
                 agent.model.max_output_tokens,
+                vec![],
             )
             .messages;
 

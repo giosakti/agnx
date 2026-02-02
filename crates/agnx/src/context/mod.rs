@@ -14,7 +14,7 @@ use std::collections::HashSet;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::llm::{ChatRequest, Message, Role, ToolDefinition};
+use crate::llm::{ChatRequest, Message, Role};
 
 // ============================================================================
 // Core Types
@@ -24,18 +24,20 @@ use crate::llm::{ChatRequest, Message, Role, ToolDefinition};
 ///
 /// Unlike a raw string system prompt, this maintains provenance of each
 /// component and allows late-binding of tools, directives, and memory.
+///
+/// Tools are NOT stored here — they live in `ToolExecutor` (single source of truth).
+/// Use `tool_refs` to specify which tools should be visible to the LLM.
 #[derive(Debug, Clone, Default)]
 pub struct StructuredContext {
     /// Ordered system blocks with provenance.
     pub system_blocks: Vec<SystemBlock>,
     /// Active directives (runtime instructions).
     pub directives: Vec<DirectiveEntry>,
-    /// Tool definitions available to the model.
-    pub tools: Vec<ToolDefinition>,
-    /// If Some, only these tools are rendered to the LLM.
-    /// If None, all tools are available. This is a context concern
-    /// (what the LLM sees), not a policy concern (what's allowed to execute).
-    pub tool_filter: Option<HashSet<String>>,
+    /// Tool references (IDs/names) to include in the request.
+    /// If None, all tools from executor are included.
+    /// If Some, only tools with matching names are included.
+    /// Actual definitions come from ToolExecutor at render time.
+    pub tool_refs: Option<HashSet<String>>,
     /// Conversation messages (user/assistant history).
     pub messages: Vec<Message>,
 }
@@ -131,14 +133,10 @@ impl StructuredContext {
         self.directives.push(directive);
     }
 
-    /// Add a tool definition.
-    pub fn add_tool(&mut self, tool: ToolDefinition) {
-        self.tools.push(tool);
-    }
-
-    /// Set tool filter to restrict which tools the LLM sees.
-    pub fn set_tool_filter(&mut self, filter: Option<HashSet<String>>) {
-        self.tool_filter = filter;
+    /// Set tool references (IDs/names) to include in requests.
+    /// Pass None to include all tools, or Some with specific names to filter.
+    pub fn set_tool_refs(&mut self, refs: Option<HashSet<String>>) {
+        self.tool_refs = refs;
     }
 
     /// Set conversation messages.
@@ -149,13 +147,19 @@ impl StructuredContext {
     /// Render to a final ChatRequest.
     ///
     /// This combines all system blocks into a single system message,
-    /// appends directives, and includes tools. Tools are filtered based
-    /// on `tool_filter` if set.
+    /// appends directives, and includes the provided tools.
+    ///
+    /// Tools should be pre-resolved from `ToolExecutor::tool_definitions()`
+    /// with `tool_refs` passed as the filter. This ensures:
+    /// - Single source of truth (executor owns tool definitions)
+    /// - Visibility guarantees (only see tools executor knows)
+    /// - Execution guarantees (only call tools executor can run)
     pub fn render(
         &self,
         model: &str,
         temperature: Option<f32>,
         max_tokens: Option<u32>,
+        tools: Vec<crate::llm::ToolDefinition>,
     ) -> ChatRequest {
         let system_message = self.render_system_message();
         let mut messages = Vec::new();
@@ -166,27 +170,12 @@ impl StructuredContext {
 
         messages.extend(self.messages.iter().cloned());
 
-        // Filter tools if a filter is set
-        let filtered_tools = if let Some(ref filter) = self.tool_filter {
-            self.tools
-                .iter()
-                .filter(|t| filter.contains(&t.function.name))
-                .cloned()
-                .collect()
-        } else {
-            self.tools.clone()
-        };
-
         ChatRequest {
             model: model.to_string(),
             messages,
             temperature,
             max_tokens,
-            tools: if filtered_tools.is_empty() {
-                None
-            } else {
-                Some(filtered_tools)
-            },
+            tools: if tools.is_empty() { None } else { Some(tools) },
         }
     }
 
@@ -232,7 +221,7 @@ impl StructuredContext {
         ContextSummary {
             block_count: self.system_blocks.len(),
             directive_count: self.directives.len(),
-            tool_count: self.tools.len(),
+            tool_ref_count: self.tool_refs.as_ref().map(|r| r.len()),
             message_count: self.messages.len(),
         }
     }
@@ -243,7 +232,8 @@ impl StructuredContext {
 pub struct ContextSummary {
     pub block_count: usize,
     pub directive_count: usize,
-    pub tool_count: usize,
+    /// Number of tool refs, or None if all tools are included.
+    pub tool_ref_count: Option<usize>,
     pub message_count: usize,
 }
 
@@ -336,7 +326,7 @@ mod tests {
         });
         ctx.set_messages(vec![Message::text(Role::User, "Hello")]);
 
-        let request = ctx.render("gpt-4", Some(0.7), Some(1024));
+        let request = ctx.render("gpt-4", Some(0.7), Some(1024), vec![]);
 
         assert_eq!(request.model, "gpt-4");
         assert_eq!(request.messages.len(), 2); // system + user
@@ -375,12 +365,12 @@ mod tests {
         let summary = ctx.summary();
         assert_eq!(summary.block_count, 2);
         assert_eq!(summary.directive_count, 1);
-        assert_eq!(summary.tool_count, 0);
+        assert!(summary.tool_ref_count.is_none()); // No refs set = all tools
         assert_eq!(summary.message_count, 2);
     }
 
     // ------------------------------------------------------------------------
-    // Tool filtering
+    // Tool refs and rendering
     // ------------------------------------------------------------------------
 
     fn make_tool(name: &str) -> crate::llm::ToolDefinition {
@@ -395,42 +385,35 @@ mod tests {
     }
 
     #[test]
-    fn render_without_filter_includes_all_tools() {
-        let mut ctx = StructuredContext::new();
-        ctx.tools = vec![make_tool("bash"), make_tool("deploy"), make_tool("git")];
-        // No filter set (default)
+    fn render_with_tools_includes_them() {
+        let ctx = StructuredContext::new();
+        let tools = vec![make_tool("bash"), make_tool("deploy")];
 
-        let request = ctx.render("gpt-4", None, None);
+        let request = ctx.render("gpt-4", None, None, tools);
 
-        let tools = request.tools.unwrap();
-        assert_eq!(tools.len(), 3);
+        let result_tools = request.tools.unwrap();
+        assert_eq!(result_tools.len(), 2);
     }
 
     #[test]
-    fn render_with_empty_filter_includes_no_tools() {
-        let mut ctx = StructuredContext::new();
-        ctx.tools = vec![make_tool("bash"), make_tool("deploy")];
-        ctx.tool_filter = Some(HashSet::new());
+    fn render_with_empty_tools_sets_none() {
+        let ctx = StructuredContext::new();
 
-        let request = ctx.render("gpt-4", None, None);
+        let request = ctx.render("gpt-4", None, None, vec![]);
 
         assert!(request.tools.is_none());
     }
 
     #[test]
-    fn render_with_filter_restricts_tools() {
+    fn tool_refs_tracked_in_summary() {
         let mut ctx = StructuredContext::new();
-        ctx.tools = vec![make_tool("bash"), make_tool("deploy"), make_tool("git")];
-        ctx.tool_filter = Some(HashSet::from_iter(["bash".to_string(), "git".to_string()]));
+        ctx.set_tool_refs(Some(HashSet::from_iter([
+            "bash".to_string(),
+            "git".to_string(),
+        ])));
 
-        let request = ctx.render("gpt-4", None, None);
-
-        let tools = request.tools.unwrap();
-        assert_eq!(tools.len(), 2);
-        let names: Vec<_> = tools.iter().map(|t| &t.function.name).collect();
-        assert!(names.contains(&&"bash".to_string()));
-        assert!(names.contains(&&"git".to_string()));
-        assert!(!names.contains(&&"deploy".to_string()));
+        let summary = ctx.summary();
+        assert_eq!(summary.tool_ref_count, Some(2));
     }
 
     #[test]

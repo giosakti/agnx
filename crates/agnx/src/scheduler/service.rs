@@ -650,6 +650,7 @@ async fn execute_task_payload(
             &agent.model.name,
             agent.model.temperature,
             agent.model.max_output_tokens,
+            vec![], // Tools handled by agentic loop via executor
         )
         .messages;
 

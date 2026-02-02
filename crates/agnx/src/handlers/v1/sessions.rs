@@ -255,7 +255,7 @@ async fn send_message_agentic(
         &ctx.agent_spec,
         ctx.request.messages,
         &event_ctx,
-        None, // TODO: wire tool_filter from context when skill feature is ready
+        None, // TODO: pass context.tool_refs when skills are implemented
     )
     .await
     {
@@ -536,7 +536,7 @@ pub async fn approve_command(
         pending,
         tool_result,
         &event_ctx,
-        None, // TODO: wire tool_filter from context when skill feature is ready
+        None, // TODO: pass context.tool_refs when skills are implemented
     )
     .await
     {
@@ -665,11 +665,12 @@ async fn prepare_chat_context(
         .with_messages(history)
         .build();
 
-    // Render to ChatRequest
+    // Render to ChatRequest (tools handled separately by agentic loop via executor)
     let chat_request = structured_context.render(
         &agent.model.name,
         agent.model.temperature,
         agent.model.max_output_tokens,
+        vec![], // Tools come from ToolExecutor in agentic loop
     );
 
     let agent_dir = agent.agent_dir.clone();

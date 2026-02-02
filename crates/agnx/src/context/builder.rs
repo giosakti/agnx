@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use crate::agent::AgentSpec;
-use crate::llm::{Message, ToolDefinition};
+use crate::llm::Message;
 
 use super::{BlockSource, StructuredContext, SystemBlock, priority};
 
@@ -14,8 +14,12 @@ use super::{BlockSource, StructuredContext, SystemBlock, priority};
 /// let context = ContextBuilder::new()
 ///     .from_agent_spec(&agent_spec)
 ///     .with_messages(history)
-///     .with_tools(tool_definitions)
+///     .with_tool_refs(tool_names)  // optional: filter which tools LLM sees
 ///     .build();
+///
+/// // Get tools from executor (single source of truth)
+/// let tools = executor.tool_definitions(context.tool_refs.as_ref());
+/// let request = context.render(model, temp, max_tokens, tools);
 /// ```
 #[derive(Debug, Default)]
 pub struct ContextBuilder {
@@ -69,15 +73,10 @@ impl ContextBuilder {
         self
     }
 
-    /// Add tool definitions.
-    pub fn with_tools(mut self, tools: Vec<ToolDefinition>) -> Self {
-        self.context.tools = tools;
-        self
-    }
-
-    /// Set tool filter to restrict which tools the LLM sees.
-    pub fn with_tool_filter(mut self, filter: HashSet<String>) -> Self {
-        self.context.tool_filter = Some(filter);
+    /// Set tool references to restrict which tools the LLM sees.
+    /// Actual tool definitions come from ToolExecutor at render time.
+    pub fn with_tool_refs(mut self, refs: HashSet<String>) -> Self {
+        self.context.tool_refs = Some(refs);
         self
     }
 
@@ -203,7 +202,7 @@ mod tests {
             .with_messages(vec![Message::text(Role::User, "Hello")])
             .build();
 
-        let request = ctx.render("gpt-4", Some(0.7), Some(1024));
+        let request = ctx.render("gpt-4", Some(0.7), Some(1024), vec![]);
 
         assert_eq!(request.model, "gpt-4");
         assert_eq!(request.messages.len(), 2);
@@ -211,14 +210,14 @@ mod tests {
     }
 
     #[test]
-    fn builder_with_tool_filter() {
+    fn builder_with_tool_refs() {
         use std::collections::HashSet;
 
-        let filter = HashSet::from_iter(["bash".to_string()]);
+        let refs = HashSet::from_iter(["bash".to_string()]);
 
-        let ctx = ContextBuilder::new().with_tool_filter(filter).build();
+        let ctx = ContextBuilder::new().with_tool_refs(refs).build();
 
-        assert!(ctx.tool_filter.is_some());
-        assert_eq!(ctx.tool_filter.unwrap().len(), 1);
+        assert!(ctx.tool_refs.is_some());
+        assert_eq!(ctx.tool_refs.unwrap().len(), 1);
     }
 }
