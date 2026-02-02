@@ -661,7 +661,7 @@ async fn execute_task_payload(
         session_locks: config.session_locks.clone(),
     };
 
-    let result = run_agentic_loop(provider, &executor, agent, messages, &event_ctx)
+    let result = run_agentic_loop(provider, &executor, agent, messages, &event_ctx, None)
         .await
         .map_err(|e| SchedulerError::ExecutionFailed(e.to_string()))?;
 

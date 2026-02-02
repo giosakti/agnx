@@ -255,6 +255,7 @@ async fn send_message_agentic(
         &ctx.agent_spec,
         ctx.request.messages,
         &event_ctx,
+        None, // TODO: wire tool_filter from context when skill feature is ready
     )
     .await
     {
@@ -535,6 +536,7 @@ pub async fn approve_command(
         pending,
         tool_result,
         &event_ctx,
+        None, // TODO: wire tool_filter from context when skill feature is ready
     )
     .await
     {

@@ -401,14 +401,14 @@ impl GatewayMessageHandler {
             session_id: session_id.to_string(),
             session_locks: self.session_locks.clone(),
         };
-        let result = match run_agentic_loop(provider, &executor, agent, messages, &event_ctx).await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                error!(error = %e, "Agentic loop failed");
-                return Some(format!("Error processing request: {}", e));
-            }
-        };
+        let result =
+            match run_agentic_loop(provider, &executor, agent, messages, &event_ctx, None).await {
+                Ok(r) => r,
+                Err(e) => {
+                    error!(error = %e, "Agentic loop failed");
+                    return Some(format!("Error processing request: {}", e));
+                }
+            };
 
         match result {
             AgenticResult::Complete {
@@ -751,21 +751,28 @@ impl MessageHandler for GatewayMessageHandler {
             session_id: session_id.to_string(),
             session_locks: self.session_locks.clone(),
         };
-        let result =
-            match resume_agentic_loop(provider, &executor, agent, pending, tool_result, &event_ctx)
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    error!(error = %e, "Agentic loop resume failed");
-                    // Set session back to Active on error
-                    let _ = self
-                        .sessions
-                        .set_status(&session_id, SessionStatus::Active)
-                        .await;
-                    return Some(format!("Error resuming: {}", e));
-                }
-            };
+        let result = match resume_agentic_loop(
+            provider,
+            &executor,
+            agent,
+            pending,
+            tool_result,
+            &event_ctx,
+            None,
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                error!(error = %e, "Agentic loop resume failed");
+                // Set session back to Active on error
+                let _ = self
+                    .sessions
+                    .set_status(&session_id, SessionStatus::Active)
+                    .await;
+                return Some(format!("Error resuming: {}", e));
+            }
+        };
 
         match result {
             AgenticResult::Complete {
