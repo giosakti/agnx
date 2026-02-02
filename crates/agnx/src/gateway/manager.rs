@@ -16,7 +16,7 @@ use tracing::{debug, error, info, warn};
 
 /// Default timeout for message handler execution (5 minutes).
 /// This prevents hung LLM calls from blocking the per-session lock indefinitely.
-const MESSAGE_HANDLER_TIMEOUT: Duration = Duration::from_secs(300);
+const DEFAULT_MESSAGE_HANDLER_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// How often to run the lock cleanup task (1 hour).
 const LOCK_CLEANUP_INTERVAL: Duration = Duration::from_secs(3600);
@@ -96,14 +96,21 @@ struct GatewayManagerInner {
 
     /// Per-session locks for serializing event processing.
     processing_locks: SessionProcessingLocks,
+
+    /// Timeout for message handler execution.
+    message_handler_timeout: Duration,
 }
 
 impl GatewayManager {
-    /// Create a new gateway manager.
+    /// Create a new gateway manager with the specified message handler timeout.
+    ///
+    /// The `message_handler_timeout` controls how long to wait for message handlers
+    /// (which typically make LLM calls) before timing out. This should match the
+    /// server's `request_timeout_seconds` config for consistency.
     ///
     /// Spawns a background task that periodically cleans up stale session locks
     /// to prevent unbounded memory growth from accumulated lock entries.
-    pub fn new() -> Self {
+    pub fn new(message_handler_timeout: Duration) -> Self {
         let processing_locks: SessionProcessingLocks = Arc::new(DashMap::new());
 
         // Spawn periodic cleanup task for stale locks
@@ -128,6 +135,7 @@ impl GatewayManager {
                 gateways: HashMap::new(),
                 handler: None,
                 processing_locks,
+                message_handler_timeout,
             })),
         }
     }
@@ -333,10 +341,14 @@ impl GatewayManager {
                         "Message received from gateway"
                     );
 
-                    // Get handler and processing locks
-                    let (handler, processing_locks) = {
+                    // Get handler, processing locks, and timeout
+                    let (handler, processing_locks, handler_timeout) = {
                         let inner = self.inner.read().await;
-                        (inner.handler.clone(), inner.processing_locks.clone())
+                        (
+                            inner.handler.clone(),
+                            inner.processing_locks.clone(),
+                            inner.message_handler_timeout,
+                        )
                     };
 
                     if let Some(handler) = handler {
@@ -351,7 +363,7 @@ impl GatewayManager {
 
                             // Wrap handler with timeout to prevent hung LLM calls from blocking
                             let handler_result = tokio::time::timeout(
-                                MESSAGE_HANDLER_TIMEOUT,
+                                handler_timeout,
                                 handler.handle_message(&gateway, &data.routing, &data.content),
                             )
                             .await;
@@ -362,7 +374,7 @@ impl GatewayManager {
                                     warn!(
                                         gateway = %gateway,
                                         chat_id = %data.chat_id,
-                                        timeout_secs = MESSAGE_HANDLER_TIMEOUT.as_secs(),
+                                        timeout_secs = handler_timeout.as_secs(),
                                         "Message handler timed out"
                                     );
                                     Some(
@@ -488,10 +500,14 @@ impl GatewayManager {
                         "Callback query received"
                     );
 
-                    // Get handler and processing locks
-                    let (handler, processing_locks) = {
+                    // Get handler, processing locks, and timeout
+                    let (handler, processing_locks, handler_timeout) = {
                         let inner = self.inner.read().await;
-                        (inner.handler.clone(), inner.processing_locks.clone())
+                        (
+                            inner.handler.clone(),
+                            inner.processing_locks.clone(),
+                            inner.message_handler_timeout,
+                        )
                     };
 
                     if let Some(handler) = handler {
@@ -506,7 +522,7 @@ impl GatewayManager {
 
                             // Wrap handler with timeout to prevent hung operations from blocking
                             let handler_result = tokio::time::timeout(
-                                MESSAGE_HANDLER_TIMEOUT,
+                                handler_timeout,
                                 handler.handle_callback_query(&gateway, &data),
                             )
                             .await;
@@ -517,7 +533,7 @@ impl GatewayManager {
                                     warn!(
                                         gateway = %gateway,
                                         callback_query_id = %data.callback_query_id,
-                                        timeout_secs = MESSAGE_HANDLER_TIMEOUT.as_secs(),
+                                        timeout_secs = handler_timeout.as_secs(),
                                         "Callback query handler timed out"
                                     );
                                     Some("Request timed out".to_string())
@@ -548,7 +564,7 @@ impl GatewayManager {
 
 impl Default for GatewayManager {
     fn default() -> Self {
-        Self::new()
+        Self::new(DEFAULT_MESSAGE_HANDLER_TIMEOUT)
     }
 }
 
@@ -646,7 +662,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_register_and_list() {
-        let manager = GatewayManager::new();
+        let manager = GatewayManager::default();
 
         let (_cmd_tx, _evt_tx) = manager
             .register("telegram", vec!["media".to_string()])
@@ -659,7 +675,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_unregister() {
-        let manager = GatewayManager::new();
+        let manager = GatewayManager::default();
 
         let (_cmd_tx, _evt_tx) = manager.register("telegram", vec![]).await;
         assert_eq!(manager.list().await.len(), 1);
@@ -670,7 +686,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_gateway() {
-        let manager = GatewayManager::new();
+        let manager = GatewayManager::default();
 
         let (_cmd_tx, _evt_tx) = manager
             .register("telegram", vec!["media".to_string(), "edit".to_string()])

@@ -83,10 +83,10 @@ impl ChatSessionCache {
         // First, try to get with just a read lock (common case)
         {
             let cache = self.cache.read().await;
-            if let Some(session_id) = cache.get(&key) {
-                if validator(session_id.clone()).await {
-                    return session_id.clone();
-                }
+            if let Some(session_id) = cache.get(&key)
+                && validator(session_id.clone()).await
+            {
+                return session_id.clone();
             }
         }
 
