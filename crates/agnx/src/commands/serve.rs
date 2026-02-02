@@ -9,7 +9,7 @@ use tokio::signal;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
-use agnx::agent::{self, AgentStore, PolicyLocks};
+use agnx::agent::{self, AgentStore};
 use agnx::background::BackgroundTasks;
 use agnx::client::AgentClient;
 use agnx::config::{self, Config, ExternalGatewayConfig};
@@ -75,10 +75,10 @@ pub async fn run(
     ));
 
     // Per-session locks for disk I/O (shared with app state)
-    let session_locks: agnx::session::SessionLocks = Arc::new(dashmap::DashMap::new());
+    let session_locks = agnx::sync::KeyedLocks::with_cleanup("session_locks");
 
     // Per-agent locks for policy file writes (shared with app state)
-    let policy_locks: PolicyLocks = Arc::new(dashmap::DashMap::new());
+    let policy_locks = agnx::sync::KeyedLocks::with_cleanup("policy_locks");
 
     // Create shared chat session cache for gateway/scheduler session reuse
     let chat_session_cache = ChatSessionCache::new();

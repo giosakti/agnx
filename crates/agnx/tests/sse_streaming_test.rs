@@ -438,8 +438,8 @@ async fn app_state_with_custom_timeouts() {
         admin_token: None,
         gateways: GatewayManager::default(),
         sandbox: Arc::new(TrustSandbox::new()),
-        policy_locks: Arc::new(dashmap::DashMap::new()),
-        session_locks: Arc::new(dashmap::DashMap::new()),
+        policy_locks: agnx::sync::KeyedLocks::new(),
+        session_locks: agnx::sync::KeyedLocks::new(),
         scheduler: None,
     };
 

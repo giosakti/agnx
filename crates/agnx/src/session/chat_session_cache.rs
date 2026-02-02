@@ -13,14 +13,22 @@ use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
 use super::load_snapshot;
+use crate::sync::KeyedLocks;
 
 /// Cache mapping (gateway, chat_id, agent) to session_id.
 ///
 /// Thread-safe cache for looking up existing sessions for gateway chats.
 /// The agent is included in the key so that routing rule changes create new sessions.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ChatSessionCache {
     cache: Arc<RwLock<HashMap<String, String>>>,
+    inflight: KeyedLocks,
+}
+
+impl Default for ChatSessionCache {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ChatSessionCache {
@@ -28,6 +36,7 @@ impl ChatSessionCache {
     pub fn new() -> Self {
         Self {
             cache: Arc::new(RwLock::new(HashMap::new())),
+            inflight: KeyedLocks::new(),
         }
     }
 
@@ -79,6 +88,8 @@ impl ChatSessionCache {
         CFut: std::future::Future<Output = String>,
     {
         let key = Self::key(gateway, chat_id, agent);
+        let lock = self.inflight.get(&key);
+        let _guard = lock.lock().await;
 
         // First, try to get with just a read lock (common case)
         {

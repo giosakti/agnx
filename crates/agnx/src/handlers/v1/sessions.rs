@@ -27,8 +27,8 @@ use crate::server::AppState;
 use crate::session::{
     AccumulatingStream, AgenticResult, ApprovalDecisionType, EventContext, SessionContext,
     SessionEventPayload, StreamConfig, clear_pending_approval_internal, commit_event,
-    get_pending_approval, get_session_lock, persist_assistant_message, record_event,
-    resume_agentic_loop, run_agentic_loop, set_pending_approval,
+    get_pending_approval, persist_assistant_message, record_event, resume_agentic_loop,
+    run_agentic_loop, set_pending_approval,
 };
 use crate::tools::{ToolExecutor, ToolResult};
 
@@ -364,7 +364,7 @@ pub async fn approve_command(
     // Acquire session lock to prevent concurrent approval requests from racing.
     // This lock is held until after we clear the pending approval, ensuring
     // atomic read-validate-process-clear semantics.
-    let approval_lock = get_session_lock(&state.session_locks, &session_id);
+    let approval_lock = state.session_locks.get(&session_id);
     let _approval_guard = approval_lock.lock().await;
 
     // Load pending approval from snapshot

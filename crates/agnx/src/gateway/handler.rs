@@ -586,6 +586,11 @@ impl MessageHandler for GatewayMessageHandler {
             }
         };
 
+        // Acquire session lock to prevent concurrent approval callbacks from racing.
+        // This prevents duplicate command execution if Telegram retries the callback.
+        let approval_lock = self.session_locks.get(&session_id);
+        let _approval_guard = approval_lock.lock().await;
+
         // Verify session exists
         let session = match self.sessions.get(&session_id).await {
             Some(s) => s,

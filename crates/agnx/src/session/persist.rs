@@ -9,10 +9,8 @@
 //! concurrent writes from corrupting session state.
 
 use std::path::Path;
-use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use tokio::sync::Mutex;
 
 use super::SessionLocks;
 use super::SessionStore;
@@ -54,17 +52,6 @@ pub struct SessionContext<'a> {
 // Persistence Functions
 // ============================================================================
 
-/// Get or create a lock for a session.
-///
-/// This is used internally for disk I/O operations and can also be used
-/// by handlers that need to protect critical sections involving session state.
-pub fn get_session_lock(locks: &SessionLocks, session_id: &str) -> Arc<Mutex<()>> {
-    locks
-        .entry(session_id.to_string())
-        .or_insert_with(|| Arc::new(Mutex::new(())))
-        .clone()
-}
-
 /// Record an event and write a snapshot atomically.
 ///
 /// This is the primary persistence operation for session state changes.
@@ -74,7 +61,7 @@ pub fn get_session_lock(locks: &SessionLocks, session_id: &str) -> Arc<Mutex<()>
 /// committed to memory after successful disk writes.
 pub async fn commit_event(ctx: &SessionContext<'_>, payload: SessionEventPayload) -> Result<u64> {
     // Acquire per-session lock for disk I/O
-    let lock = get_session_lock(ctx.session_locks, ctx.session_id);
+    let lock = ctx.session_locks.get(ctx.session_id);
     let _guard = lock.lock().await;
 
     // 1. Peek next sequence number (doesn't modify in-memory state yet)
@@ -113,7 +100,7 @@ pub async fn record_event(
     session_locks: &SessionLocks,
 ) -> Result<u64> {
     // Acquire per-session lock for disk I/O
-    let lock = get_session_lock(session_locks, session_id);
+    let lock = session_locks.get(session_id);
     let _guard = lock.lock().await;
 
     // 1. Peek next sequence number (doesn't modify in-memory state yet)
@@ -167,7 +154,7 @@ pub async fn persist_assistant_message(
 /// Use this when session state changes without a new event (e.g., status updates).
 pub async fn write_session_snapshot(ctx: &SessionContext<'_>) -> Result<()> {
     // Acquire per-session lock for disk I/O
-    let lock = get_session_lock(ctx.session_locks, ctx.session_id);
+    let lock = ctx.session_locks.get(ctx.session_id);
     let _guard = lock.lock().await;
 
     let last_event_seq = ctx.sessions.last_event_seq(ctx.session_id).await?;
@@ -221,7 +208,7 @@ pub async fn set_pending_approval(
     session_locks: &SessionLocks,
 ) -> Result<()> {
     // Acquire per-session lock for disk I/O
-    let lock = get_session_lock(session_locks, session_id);
+    let lock = session_locks.get(session_id);
     let _guard = lock.lock().await;
 
     // Load existing snapshot
@@ -258,7 +245,7 @@ pub async fn clear_pending_approval(
     session_locks: &SessionLocks,
 ) -> Result<()> {
     // Acquire per-session lock for disk I/O
-    let lock = get_session_lock(session_locks, session_id);
+    let lock = session_locks.get(session_id);
     let _guard = lock.lock().await;
 
     clear_pending_approval_internal(sessions_path, session_id).await
@@ -321,7 +308,7 @@ mod tests {
     // ------------------------------------------------------------------------
 
     fn create_test_locks() -> SessionLocks {
-        Arc::new(dashmap::DashMap::new())
+        SessionLocks::new()
     }
 
     async fn create_test_session(sessions: &SessionStore) -> String {
@@ -347,48 +334,6 @@ mod tests {
         write_snapshot(tmp.path(), session_id, &snapshot)
             .await
             .unwrap();
-    }
-
-    // ------------------------------------------------------------------------
-    // get_session_lock - Lock acquisition
-    // ------------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn get_session_lock_creates_new_lock_for_session() {
-        let locks = create_test_locks();
-
-        let lock = get_session_lock(&locks, "session-1");
-
-        // Lock should be acquirable
-        let guard = lock.try_lock();
-        assert!(guard.is_ok());
-    }
-
-    #[tokio::test]
-    async fn get_session_lock_returns_same_lock_for_same_session() {
-        let locks = create_test_locks();
-
-        let lock1 = get_session_lock(&locks, "session-1");
-        let lock2 = get_session_lock(&locks, "session-1");
-
-        // Same Arc pointer
-        assert!(Arc::ptr_eq(&lock1, &lock2));
-    }
-
-    #[tokio::test]
-    async fn get_session_lock_creates_separate_locks_for_different_sessions() {
-        let locks = create_test_locks();
-
-        let lock1 = get_session_lock(&locks, "session-1");
-        let lock2 = get_session_lock(&locks, "session-2");
-
-        // Different Arc pointers
-        assert!(!Arc::ptr_eq(&lock1, &lock2));
-
-        // Both can be locked simultaneously
-        let _guard1 = lock1.try_lock().unwrap();
-        let guard2 = lock2.try_lock();
-        assert!(guard2.is_ok());
     }
 
     // ------------------------------------------------------------------------

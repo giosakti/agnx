@@ -35,8 +35,8 @@ pub use snapshot_writer::write_snapshot;
 // Persistence and recovery
 pub use persist::{
     SessionContext, clear_pending_approval, clear_pending_approval_internal, commit_event,
-    get_pending_approval, get_session_lock, persist_assistant_message, record_event,
-    set_pending_approval, write_session_snapshot,
+    get_pending_approval, persist_assistant_message, record_event, set_pending_approval,
+    write_session_snapshot,
 };
 pub use recover::{RecoveryResult, recover_sessions};
 pub use resume::{ResumedSession, resume_session};
@@ -64,7 +64,9 @@ use crate::llm::Message;
 ///
 /// Prevents concurrent writes to the same session's files (events.jsonl, state.yaml).
 /// Different sessions can write concurrently without contention.
-pub type SessionLocks = Arc<DashMap<String, Arc<Mutex<()>>>>;
+///
+/// Uses `KeyedLocks` which tracks last-access time for periodic cleanup of stale entries.
+pub type SessionLocks = crate::sync::KeyedLocks;
 
 /// A conversation session with an agent.
 ///
