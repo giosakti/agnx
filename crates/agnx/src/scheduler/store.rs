@@ -138,6 +138,22 @@ impl ScheduleStore {
         inner.states.insert(id.to_string(), state);
     }
 
+    /// Atomically update runtime state for a schedule.
+    ///
+    /// This prevents read-modify-write races by holding the lock during the entire operation.
+    /// The closure receives a mutable reference to the current state (or default if none exists).
+    pub async fn update_state_atomically<F>(&self, id: &str, f: F)
+    where
+        F: FnOnce(&mut ScheduleState),
+    {
+        let mut inner = self.inner.write().await;
+        let state = inner
+            .states
+            .entry(id.to_string())
+            .or_insert_with(ScheduleState::default);
+        f(state);
+    }
+
     /// List schedules for an agent.
     pub async fn list_by_agent(&self, agent: &str) -> Vec<Schedule> {
         let inner = self.inner.read().await;
