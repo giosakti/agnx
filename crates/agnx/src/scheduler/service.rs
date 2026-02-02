@@ -9,9 +9,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use tokio::sync::{RwLock, mpsc, oneshot};
+use tokio::sync::{RwLock, Semaphore, mpsc, oneshot};
 use tokio::time::Instant;
 use tracing::{debug, error, info, warn};
+
+/// Maximum concurrent scheduled task executions.
+///
+/// Prevents LLM call storms when many schedules fire simultaneously.
+const MAX_CONCURRENT_EXECUTIONS: usize = 5;
 
 use crate::agent::AgentStore;
 use crate::context::ContextBuilder;
@@ -130,6 +135,8 @@ pub struct SchedulerService {
     config: SchedulerConfig,
     /// Active timers by schedule ID.
     timers: Arc<RwLock<HashMap<ScheduleId, oneshot::Sender<()>>>>,
+    /// Semaphore to limit concurrent task executions.
+    execution_semaphore: Arc<Semaphore>,
 }
 
 impl SchedulerService {
@@ -143,6 +150,7 @@ impl SchedulerService {
             run_log,
             config,
             timers: Arc::new(RwLock::new(HashMap::new())),
+            execution_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_EXECUTIONS)),
         }
     }
 
@@ -246,6 +254,7 @@ impl SchedulerService {
         let store = self.store.clone();
         let run_log = self.run_log.clone();
         let timers = self.timers.clone();
+        let semaphore = self.execution_semaphore.clone();
         let config = SchedulerConfigRef {
             sessions_path: self.config.sessions_path.clone(),
             agents: self.config.agents.clone(),
@@ -263,7 +272,7 @@ impl SchedulerService {
             tokio::select! {
                 _ = tokio::time::sleep_until(deadline) => {
                     // Timer fired - execute
-                    execute_schedule(schedule_id, store, run_log, config, timers).await;
+                    execute_schedule(schedule_id, store, run_log, config, timers, semaphore).await;
                 }
                 _ = cancel_rx => {
                     debug!(schedule_id = %schedule_id, "Timer cancelled");
@@ -339,8 +348,15 @@ fn execute_schedule(
     run_log: RunLog,
     config: SchedulerConfigRef,
     timers: Arc<RwLock<HashMap<ScheduleId, oneshot::Sender<()>>>>,
+    semaphore: Arc<Semaphore>,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
     Box::pin(async move {
+        // Clone semaphore for potential rescheduling before acquiring permit
+        let semaphore_for_reschedule = semaphore.clone();
+
+        // Acquire semaphore permit to limit concurrent executions
+        let _permit = semaphore.acquire().await.expect("semaphore closed");
+
         let start = Utc::now();
         let start_instant = std::time::Instant::now();
 
@@ -511,7 +527,7 @@ fn execute_schedule(
                 let deadline = Instant::now() + delay;
                 tokio::select! {
                     _ = tokio::time::sleep_until(deadline) => {
-                        execute_schedule(schedule_id, store, run_log, config, timers).await;
+                        execute_schedule(schedule_id, store, run_log, config, timers, semaphore_for_reschedule).await;
                     }
                     _ = cancel_rx => {
                         debug!(schedule_id = %schedule_id, "Recurring timer cancelled");
