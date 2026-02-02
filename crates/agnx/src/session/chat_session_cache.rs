@@ -92,29 +92,25 @@ impl ChatSessionCache {
         let _guard = lock.lock().await;
 
         // First, try to get with just a read lock (common case)
-        {
+        if let Some(session_id) = {
             let cache = self.cache.read().await;
-            if let Some(session_id) = cache.get(&key)
-                && validator(session_id.clone()).await
-            {
-                return session_id.clone();
-            }
-        }
-
-        // Not found or invalid - need write lock for insertion
-        let mut cache = self.cache.write().await;
-
-        // Double-check after acquiring write lock (another thread may have inserted)
-        if let Some(session_id) = cache.get(&key) {
+            cache.get(&key).cloned()
+        } {
             if validator(session_id.clone()).await {
-                return session_id.clone();
+                return session_id;
             }
+
             // Session was deleted, remove stale entry
+            let mut cache = self.cache.write().await;
             cache.remove(&key);
         }
 
         // Create new session and insert
         let session_id = creator().await;
+        let mut cache = self.cache.write().await;
+        if let Some(existing) = cache.get(&key) {
+            return existing.clone();
+        }
         cache.insert(key, session_id.clone());
         session_id
     }
