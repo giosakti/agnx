@@ -118,9 +118,12 @@ impl GatewayMessageHandler {
 
     /// Get or create a session for a gateway chat.
     ///
-    /// Uses the shared `ChatSessionCache` to look up existing sessions by
+    /// Uses the shared `ChatSessionCache` to atomically look up or create sessions by
     /// (gateway, chat_id, agent) tuple. This enables long-lived sessions
     /// that persist across gateway messages and scheduled tasks.
+    ///
+    /// The atomic get-or-insert pattern prevents race conditions where two concurrent
+    /// callers could both miss the cache and create duplicate sessions.
     async fn get_or_create_session(
         &self,
         gateway: &str,
@@ -129,61 +132,81 @@ impl GatewayMessageHandler {
         // Resolve agent first - we need it for the cache key
         let agent_name = self.resolve_agent(gateway, routing)?;
 
-        // Check if we already have a session for this (gateway, chat_id, agent)
-        if let Some(session_id) = self
-            .chat_session_cache
-            .get(gateway, &routing.chat_id, &agent_name)
-            .await
-        {
-            // Verify session still exists
-            if self.sessions.get(&session_id).await.is_some() {
-                return Some(session_id);
-            }
-        }
-
-        // Create a new session
+        // Get the agent spec for session creation (needed if we create a new session)
         let agent = self.agents.get(&agent_name)?;
-        let session = self.sessions.create(&agent_name).await;
-        let session_id = session.id.clone();
 
-        // Persist session start event with gateway routing info
-        let ctx = SessionContext {
-            sessions: &self.sessions,
-            sessions_path: &self.sessions_path,
-            session_id: &session_id,
-            agent: &session.agent,
-            created_at: session.created_at,
-            status: SessionStatus::Active,
-            on_disconnect: agent.session.on_disconnect,
-            gateway: Some(gateway),
-            gateway_chat_id: Some(&routing.chat_id),
-            pending_approval: None,
-            session_locks: &self.session_locks,
-        };
-        if let Err(e) = commit_event(
-            &ctx,
-            SessionEventPayload::SessionStart {
-                session_id: session_id.clone(),
-                agent: session.agent.clone(),
-            },
-        )
-        .await
-        {
-            error!(error = %e, "Failed to persist gateway session start");
-        }
+        // Clone values needed in closures
+        let sessions = self.sessions.clone();
+        let sessions_path = self.sessions_path.clone();
+        let session_locks = self.session_locks.clone();
+        let agent_name_clone = agent_name.clone();
+        let gateway_clone = gateway.to_string();
+        let chat_id_clone = routing.chat_id.clone();
+        let on_disconnect = agent.session.on_disconnect;
 
-        // Store in the shared cache
-        self.chat_session_cache
-            .insert(gateway, &routing.chat_id, &agent_name, &session_id)
+        // Use atomic get-or-insert to prevent race conditions
+        let session_id = self
+            .chat_session_cache
+            .get_or_insert_with(
+                gateway,
+                &routing.chat_id,
+                &agent_name,
+                // Validator: check if the cached session still exists
+                |session_id| {
+                    let sessions = sessions.clone();
+                    async move { sessions.get(&session_id).await.is_some() }
+                },
+                // Creator: create a new session if needed
+                || {
+                    let sessions = sessions.clone();
+                    let sessions_path = sessions_path.clone();
+                    let session_locks = session_locks.clone();
+                    let agent_name = agent_name_clone.clone();
+                    let gateway = gateway_clone.clone();
+                    let chat_id = chat_id_clone.clone();
+                    async move {
+                        let session = sessions.create(&agent_name).await;
+                        let session_id = session.id.clone();
+
+                        // Persist session start event with gateway routing info
+                        let ctx = SessionContext {
+                            sessions: &sessions,
+                            sessions_path: &sessions_path,
+                            session_id: &session_id,
+                            agent: &session.agent,
+                            created_at: session.created_at,
+                            status: SessionStatus::Active,
+                            on_disconnect,
+                            gateway: Some(&gateway),
+                            gateway_chat_id: Some(&chat_id),
+                            pending_approval: None,
+                            session_locks: &session_locks,
+                        };
+                        if let Err(e) = commit_event(
+                            &ctx,
+                            SessionEventPayload::SessionStart {
+                                session_id: session_id.clone(),
+                                agent: session.agent.clone(),
+                            },
+                        )
+                        .await
+                        {
+                            error!(error = %e, "Failed to persist gateway session start");
+                        }
+
+                        debug!(
+                            gateway = %gateway,
+                            chat_id = %chat_id,
+                            session_id = %session_id,
+                            agent = %agent_name,
+                            "Created new session for gateway chat"
+                        );
+
+                        session_id
+                    }
+                },
+            )
             .await;
-
-        debug!(
-            gateway = %gateway,
-            chat_id = %routing.chat_id,
-            session_id = %session_id,
-            agent = %agent_name,
-            "Created new session for gateway chat"
-        );
 
         Some(session_id)
     }
