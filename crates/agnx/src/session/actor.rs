@@ -616,12 +616,15 @@ impl SessionActor {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
+    use async_trait::async_trait;
     use tokio::sync::oneshot;
 
     use super::*;
     use crate::store::file::FileSessionStore;
+    use crate::store::{StorageError, StorageResult};
     use tempfile::TempDir;
 
     fn setup_test_actor(
@@ -765,5 +768,158 @@ mod tests {
         // Verify snapshot exists
         let snapshot_file = temp_dir.path().join("session_test123").join("state.yaml");
         assert!(snapshot_file.exists());
+    }
+
+    // ========================================================================
+    // Flush Failure Re-queue Tests
+    // ========================================================================
+
+    /// A mock store that fails on the first N append_events calls.
+    struct FailingStore {
+        inner: FileSessionStore,
+        append_call_count: AtomicUsize,
+        fail_until: usize,
+    }
+
+    impl FailingStore {
+        fn new(inner: FileSessionStore, fail_until: usize) -> Self {
+            Self {
+                inner,
+                append_call_count: AtomicUsize::new(0),
+                fail_until,
+            }
+        }
+
+        fn append_calls(&self) -> usize {
+            self.append_call_count.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl crate::store::SessionStore for FailingStore {
+        async fn list(&self) -> StorageResult<Vec<String>> {
+            self.inner.list().await
+        }
+
+        async fn delete(&self, session_id: &str) -> StorageResult<()> {
+            self.inner.delete(session_id).await
+        }
+
+        async fn load_events(
+            &self,
+            session_id: &str,
+            after_seq: u64,
+        ) -> StorageResult<Vec<SessionEvent>> {
+            self.inner.load_events(session_id, after_seq).await
+        }
+
+        async fn append_events(
+            &self,
+            session_id: &str,
+            events: &[SessionEvent],
+        ) -> StorageResult<()> {
+            let call_num = self.append_call_count.fetch_add(1, Ordering::SeqCst);
+            if call_num < self.fail_until {
+                return Err(StorageError::file_io(
+                    "simulated",
+                    std::io::Error::other("simulated failure"),
+                ));
+            }
+            self.inner.append_events(session_id, events).await
+        }
+
+        async fn load_snapshot(
+            &self,
+            session_id: &str,
+        ) -> StorageResult<Option<crate::session::SessionSnapshot>> {
+            self.inner.load_snapshot(session_id).await
+        }
+
+        async fn save_snapshot(
+            &self,
+            session_id: &str,
+            snapshot: &crate::session::SessionSnapshot,
+        ) -> StorageResult<()> {
+            self.inner.save_snapshot(session_id, snapshot).await
+        }
+    }
+
+    #[tokio::test]
+    async fn flush_failure_requeues_events() {
+        let temp_dir = TempDir::new().unwrap();
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+        // Create a failing store that fails the first append_events call
+        // but succeeds on the second (the initial SessionStart flush will fail,
+        // then succeed on retry during the flush interval)
+        let inner_store = FileSessionStore::new(temp_dir.path());
+        let store = Arc::new(FailingStore::new(inner_store, 1));
+
+        let config = ActorConfig {
+            id: "sess_failing_flush".to_string(),
+            agent: "test-agent".to_string(),
+            store: store.clone(),
+            on_disconnect: OnDisconnect::Pause,
+            gateway: None,
+            gateway_chat_id: None,
+        };
+
+        let (tx, _task_handle) = SessionActor::spawn(config, shutdown_rx);
+
+        // Wait for the actor to process SessionStart and retry flush
+        // The first flush will fail, events get re-queued, then the periodic
+        // flush timer will retry and succeed
+        tokio::time::sleep(Duration::from_millis(250)).await;
+
+        // Add a user message to verify the actor is still working
+        let (reply_tx, reply_rx) = oneshot::channel();
+        tx.send(SessionCommand::AddUserMessage {
+            content: "Hello after retry".to_string(),
+            reply: reply_tx,
+        })
+        .await
+        .unwrap();
+
+        // The command should succeed
+        let result = reply_rx.await.unwrap();
+        assert!(result.is_ok());
+
+        // Force a flush to ensure events are persisted
+        let (reply_tx, reply_rx) = oneshot::channel();
+        tx.send(SessionCommand::ForceFlush { reply: reply_tx })
+            .await
+            .unwrap();
+        reply_rx.await.unwrap().unwrap();
+
+        // Verify that append_events was called multiple times (retry happened)
+        assert!(
+            store.append_calls() >= 2,
+            "Expected at least 2 append calls due to retry, got {}",
+            store.append_calls()
+        );
+
+        // Verify the events file exists and has events
+        let events_file = temp_dir
+            .path()
+            .join("sess_failing_flush")
+            .join("events.jsonl");
+        assert!(events_file.exists());
+
+        // Read events and verify they were persisted
+        let inner_store = FileSessionStore::new(temp_dir.path());
+        let events = inner_store
+            .load_events("sess_failing_flush", 0)
+            .await
+            .unwrap();
+
+        // Should have SessionStart event (seq 1) and UserMessage event (seq 2)
+        assert!(
+            events.len() >= 2,
+            "Expected at least 2 events, got {}",
+            events.len()
+        );
+        assert_eq!(events[0].seq, 1); // SessionStart
+
+        shutdown_tx.send(true).unwrap();
     }
 }

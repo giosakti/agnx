@@ -10,6 +10,10 @@ use agnx::session::{SessionConfig, SessionEvent, SessionEventPayload, SessionSna
 use agnx::store::SessionStore;
 use agnx::store::file::FileSessionStore;
 
+// ============================================================================
+// Helpers
+// ============================================================================
+
 fn create_store(temp_dir: &TempDir) -> FileSessionStore {
     FileSessionStore::new(temp_dir.path().join("sessions"))
 }
@@ -120,6 +124,186 @@ async fn events_preserve_sequence_order() {
     // Verify order preserved
     for (i, event) in read_events.iter().enumerate() {
         assert_eq!(event.seq, (i + 1) as u64);
+    }
+}
+
+#[tokio::test]
+async fn append_to_existing_file() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = create_store(&temp_dir);
+    let session_id = "append_test";
+
+    // Write first batch of events
+    store
+        .append_events(
+            session_id,
+            &[
+                SessionEvent::new(
+                    1,
+                    SessionEventPayload::UserMessage {
+                        content: "First".to_string(),
+                    },
+                ),
+                SessionEvent::new(
+                    2,
+                    SessionEventPayload::UserMessage {
+                        content: "Second".to_string(),
+                    },
+                ),
+            ],
+        )
+        .await
+        .unwrap();
+
+    // Append more (simulating new request)
+    store
+        .append_events(
+            session_id,
+            &[SessionEvent::new(
+                3,
+                SessionEventPayload::UserMessage {
+                    content: "Third".to_string(),
+                },
+            )],
+        )
+        .await
+        .unwrap();
+
+    // Read all events
+    let events = store.load_events(session_id, 0).await.unwrap();
+
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[0].seq, 1);
+    assert_eq!(events[1].seq, 2);
+    assert_eq!(events[2].seq, 3);
+}
+
+#[tokio::test]
+async fn all_event_types_roundtrip() {
+    use agnx::api::SessionStatus;
+    use agnx::session::{SessionEndReason, ToolResultData};
+
+    let temp_dir = TempDir::new().unwrap();
+    let store = create_store(&temp_dir);
+    let session_id = "all_types_test";
+
+    let events = vec![
+        SessionEvent::new(
+            1,
+            SessionEventPayload::SessionStart {
+                agent: "test-agent".to_string(),
+                on_disconnect: OnDisconnect::Pause,
+                gateway: None,
+                gateway_chat_id: None,
+            },
+        ),
+        SessionEvent::new(
+            2,
+            SessionEventPayload::UserMessage {
+                content: "Search for rust".to_string(),
+            },
+        ),
+        SessionEvent::new(
+            3,
+            SessionEventPayload::ToolCall {
+                call_id: "call_abc123".to_string(),
+                tool_name: "web_search".to_string(),
+                arguments: serde_json::json!({"query": "rust programming"}),
+            },
+        ),
+        SessionEvent::new(
+            4,
+            SessionEventPayload::ToolResult {
+                call_id: "call_abc123".to_string(),
+                result: ToolResultData {
+                    success: true,
+                    content: "Rust is a systems programming language.".to_string(),
+                },
+            },
+        ),
+        SessionEvent::new(
+            5,
+            SessionEventPayload::AssistantMessage {
+                agent: "test-agent".to_string(),
+                content: "Here's what I found about Rust.".to_string(),
+                usage: Some(Usage {
+                    prompt_tokens: 50,
+                    completion_tokens: 20,
+                    total_tokens: 70,
+                }),
+            },
+        ),
+        SessionEvent::new(
+            6,
+            SessionEventPayload::StatusChange {
+                from: SessionStatus::Active,
+                to: SessionStatus::Paused,
+            },
+        ),
+        SessionEvent::new(
+            7,
+            SessionEventPayload::Error {
+                code: "rate_limit".to_string(),
+                message: "Too many requests".to_string(),
+            },
+        ),
+        SessionEvent::new(
+            8,
+            SessionEventPayload::SessionEnd {
+                reason: SessionEndReason::Completed,
+            },
+        ),
+    ];
+
+    store.append_events(session_id, &events).await.unwrap();
+
+    let read_events = store.load_events(session_id, 0).await.unwrap();
+
+    assert_eq!(read_events.len(), 8);
+
+    // Verify each event type deserialized correctly
+    match &read_events[2].payload {
+        SessionEventPayload::ToolCall {
+            call_id,
+            tool_name,
+            arguments,
+        } => {
+            assert_eq!(call_id, "call_abc123");
+            assert_eq!(tool_name, "web_search");
+            assert_eq!(arguments["query"], "rust programming");
+        }
+        _ => panic!("expected ToolCall"),
+    }
+
+    match &read_events[3].payload {
+        SessionEventPayload::ToolResult { call_id, result } => {
+            assert_eq!(call_id, "call_abc123");
+            assert!(result.success);
+        }
+        _ => panic!("expected ToolResult"),
+    }
+
+    match &read_events[5].payload {
+        SessionEventPayload::StatusChange { from, to } => {
+            assert_eq!(*from, SessionStatus::Active);
+            assert_eq!(*to, SessionStatus::Paused);
+        }
+        _ => panic!("expected StatusChange"),
+    }
+
+    match &read_events[6].payload {
+        SessionEventPayload::Error { code, message } => {
+            assert_eq!(code, "rate_limit");
+            assert_eq!(message, "Too many requests");
+        }
+        _ => panic!("expected Error"),
+    }
+
+    match &read_events[7].payload {
+        SessionEventPayload::SessionEnd { reason } => {
+            assert_eq!(*reason, SessionEndReason::Completed);
+        }
+        _ => panic!("expected SessionEnd"),
     }
 }
 
@@ -369,7 +553,242 @@ async fn events_and_snapshot_coordinate_recovery() {
 }
 
 // ============================================================================
-// Missing File Handling Tests
+// Recovery Integration Tests
+// ============================================================================
+
+/// Test that recovery correctly replays events after a snapshot.
+///
+/// This simulates crash recovery: a session with 60 messages (triggering a
+/// snapshot at 50), then recovery that must replay events 51-60 on top of
+/// the snapshot to restore the full conversation.
+#[tokio::test]
+async fn recovery_replays_events_after_snapshot() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = create_store(&temp_dir);
+    let session_id = "sess_recovery_60";
+    let agent = "recovery-agent";
+
+    // 1. Write events 1-60 (simulating what the actor would write)
+    let events: Vec<_> = (1..=60)
+        .map(|i| {
+            if i == 1 {
+                SessionEvent::new(
+                    i,
+                    SessionEventPayload::SessionStart {
+                        agent: agent.to_string(),
+                        on_disconnect: OnDisconnect::Pause,
+                        gateway: None,
+                        gateway_chat_id: None,
+                    },
+                )
+            } else if i % 2 == 0 {
+                SessionEvent::new(
+                    i,
+                    SessionEventPayload::UserMessage {
+                        content: format!("User message {}", i),
+                    },
+                )
+            } else {
+                SessionEvent::new(
+                    i,
+                    SessionEventPayload::AssistantMessage {
+                        agent: agent.to_string(),
+                        content: format!("Assistant message {}", i),
+                        usage: None,
+                    },
+                )
+            }
+        })
+        .collect();
+
+    store.append_events(session_id, &events).await.unwrap();
+
+    // 2. Create snapshot at seq 50 (as the actor would after 50 events)
+    //    The conversation in the snapshot contains messages from events 2-50
+    let snapshot_conversation: Vec<_> = (2..=50)
+        .map(|i| {
+            if i % 2 == 0 {
+                Message::text(Role::User, format!("User message {}", i))
+            } else {
+                Message::text(Role::Assistant, format!("Assistant message {}", i))
+            }
+        })
+        .collect();
+
+    let snapshot = SessionSnapshot::new(
+        session_id.to_string(),
+        agent.to_string(),
+        SessionStatus::Active,
+        Utc::now(),
+        50, // last_event_seq at snapshot time
+        snapshot_conversation,
+        SessionConfig::default(),
+    );
+
+    store.save_snapshot(session_id, &snapshot).await.unwrap();
+
+    // 3. Simulate recovery: load snapshot and replay events
+    let loaded_snapshot = store.load_snapshot(session_id).await.unwrap().unwrap();
+    assert_eq!(loaded_snapshot.last_event_seq, 50);
+    assert_eq!(loaded_snapshot.conversation.len(), 49); // messages 2-50
+
+    // Load events after snapshot
+    let replay_events = store
+        .load_events(session_id, loaded_snapshot.last_event_seq)
+        .await
+        .unwrap();
+
+    // Should get events 51-60
+    assert_eq!(replay_events.len(), 10);
+    assert_eq!(replay_events[0].seq, 51);
+    assert_eq!(replay_events[9].seq, 60);
+
+    // 4. Replay events to rebuild full conversation
+    let mut recovered_messages = loaded_snapshot.conversation.clone();
+
+    for event in replay_events {
+        if let Some(msg) = event.to_message() {
+            recovered_messages.push(msg);
+        }
+    }
+
+    // 5. Verify full conversation recovered (messages 2-60 = 59 messages)
+    //    Event 1 is SessionStart, doesn't produce a message
+    assert_eq!(recovered_messages.len(), 59);
+
+    // Verify first message from snapshot
+    assert_eq!(recovered_messages[0].content_str(), "User message 2");
+
+    // Verify last message from snapshot
+    assert_eq!(recovered_messages[48].content_str(), "User message 50");
+
+    // Verify first replayed message (event 51)
+    assert_eq!(recovered_messages[49].content_str(), "Assistant message 51");
+
+    // Verify last replayed message (event 60)
+    assert_eq!(recovered_messages[58].content_str(), "User message 60");
+}
+
+/// Test that recovery handles multiple snapshots, using only the latest.
+#[tokio::test]
+async fn recovery_uses_latest_snapshot() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = create_store(&temp_dir);
+    let session_id = "sess_multi_snapshot";
+    let agent = "test-agent";
+
+    // Write events 1-100
+    let events: Vec<_> = (1..=100)
+        .map(|i| {
+            SessionEvent::new(
+                i,
+                SessionEventPayload::UserMessage {
+                    content: format!("Message {}", i),
+                },
+            )
+        })
+        .collect();
+
+    store.append_events(session_id, &events).await.unwrap();
+
+    // Snapshot overwrites previous - this simulates taking a newer snapshot
+    let snapshot_conversation: Vec<_> = (1..=75)
+        .map(|i| Message::text(Role::User, format!("Message {}", i)))
+        .collect();
+
+    let snapshot = SessionSnapshot::new(
+        session_id.to_string(),
+        agent.to_string(),
+        SessionStatus::Active,
+        Utc::now(),
+        75, // last_event_seq at snapshot time
+        snapshot_conversation,
+        SessionConfig::default(),
+    );
+
+    store.save_snapshot(session_id, &snapshot).await.unwrap();
+
+    // Simulate recovery
+    let loaded = store.load_snapshot(session_id).await.unwrap().unwrap();
+    assert_eq!(loaded.last_event_seq, 75);
+
+    let replay_events = store
+        .load_events(session_id, loaded.last_event_seq)
+        .await
+        .unwrap();
+
+    // Should only replay events 76-100
+    assert_eq!(replay_events.len(), 25);
+    assert_eq!(replay_events[0].seq, 76);
+
+    let mut recovered = loaded.conversation.clone();
+    for event in replay_events {
+        if let Some(msg) = event.to_message() {
+            recovered.push(msg);
+        }
+    }
+
+    // All 100 messages recovered
+    assert_eq!(recovered.len(), 100);
+    assert_eq!(recovered[0].content_str(), "Message 1");
+    assert_eq!(recovered[99].content_str(), "Message 100");
+}
+
+/// Test recovery when snapshot exists but no events after it.
+#[tokio::test]
+async fn recovery_with_no_events_after_snapshot() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = create_store(&temp_dir);
+    let session_id = "sess_snapshot_only";
+    let agent = "test-agent";
+
+    // Write events 1-10
+    let events: Vec<_> = (1..=10)
+        .map(|i| {
+            SessionEvent::new(
+                i,
+                SessionEventPayload::UserMessage {
+                    content: format!("Message {}", i),
+                },
+            )
+        })
+        .collect();
+
+    store.append_events(session_id, &events).await.unwrap();
+
+    // Snapshot at seq 10 (covers all events)
+    let snapshot_conversation: Vec<_> = (1..=10)
+        .map(|i| Message::text(Role::User, format!("Message {}", i)))
+        .collect();
+
+    let snapshot = SessionSnapshot::new(
+        session_id.to_string(),
+        agent.to_string(),
+        SessionStatus::Active,
+        Utc::now(),
+        10,
+        snapshot_conversation,
+        SessionConfig::default(),
+    );
+
+    store.save_snapshot(session_id, &snapshot).await.unwrap();
+
+    // Simulate recovery
+    let loaded = store.load_snapshot(session_id).await.unwrap().unwrap();
+    let replay_events = store
+        .load_events(session_id, loaded.last_event_seq)
+        .await
+        .unwrap();
+
+    // No events to replay (snapshot is current)
+    assert!(replay_events.is_empty());
+
+    // Conversation from snapshot is complete
+    assert_eq!(loaded.conversation.len(), 10);
+}
+
+// ============================================================================
+// Edge Cases: Missing Files
 // ============================================================================
 
 #[tokio::test]
@@ -391,7 +810,7 @@ async fn load_snapshot_returns_none_for_missing_session() {
 }
 
 // ============================================================================
-// Malformed Data Handling Tests
+// Edge Cases: Malformed Data
 // ============================================================================
 
 #[tokio::test]
@@ -535,7 +954,7 @@ async fn load_snapshot_returns_error_for_incompatible_schema() {
 }
 
 // ============================================================================
-// Atomic Write Tests
+// Atomicity and Durability Tests
 // ============================================================================
 
 #[tokio::test]
@@ -618,192 +1037,4 @@ async fn snapshot_overwrite_is_atomic() {
         .join(session_id)
         .join("state.yaml.tmp");
     assert!(!temp_path.exists());
-}
-
-// ============================================================================
-// Append Mode Tests
-// ============================================================================
-
-#[tokio::test]
-async fn append_to_existing_file() {
-    let temp_dir = TempDir::new().unwrap();
-    let store = create_store(&temp_dir);
-    let session_id = "append_test";
-
-    // Write first batch of events
-    store
-        .append_events(
-            session_id,
-            &[
-                SessionEvent::new(
-                    1,
-                    SessionEventPayload::UserMessage {
-                        content: "First".to_string(),
-                    },
-                ),
-                SessionEvent::new(
-                    2,
-                    SessionEventPayload::UserMessage {
-                        content: "Second".to_string(),
-                    },
-                ),
-            ],
-        )
-        .await
-        .unwrap();
-
-    // Append more (simulating new request)
-    store
-        .append_events(
-            session_id,
-            &[SessionEvent::new(
-                3,
-                SessionEventPayload::UserMessage {
-                    content: "Third".to_string(),
-                },
-            )],
-        )
-        .await
-        .unwrap();
-
-    // Read all events
-    let events = store.load_events(session_id, 0).await.unwrap();
-
-    assert_eq!(events.len(), 3);
-    assert_eq!(events[0].seq, 1);
-    assert_eq!(events[1].seq, 2);
-    assert_eq!(events[2].seq, 3);
-}
-
-// ============================================================================
-// Complex Event Types Tests
-// ============================================================================
-
-#[tokio::test]
-async fn all_event_types_roundtrip() {
-    use agnx::api::SessionStatus;
-    use agnx::session::{SessionEndReason, ToolResultData};
-
-    let temp_dir = TempDir::new().unwrap();
-    let store = create_store(&temp_dir);
-    let session_id = "all_types_test";
-
-    let events = vec![
-        SessionEvent::new(
-            1,
-            SessionEventPayload::SessionStart {
-                agent: "test-agent".to_string(),
-                on_disconnect: OnDisconnect::Pause,
-                gateway: None,
-                gateway_chat_id: None,
-            },
-        ),
-        SessionEvent::new(
-            2,
-            SessionEventPayload::UserMessage {
-                content: "Search for rust".to_string(),
-            },
-        ),
-        SessionEvent::new(
-            3,
-            SessionEventPayload::ToolCall {
-                call_id: "call_abc123".to_string(),
-                tool_name: "web_search".to_string(),
-                arguments: serde_json::json!({"query": "rust programming"}),
-            },
-        ),
-        SessionEvent::new(
-            4,
-            SessionEventPayload::ToolResult {
-                call_id: "call_abc123".to_string(),
-                result: ToolResultData {
-                    success: true,
-                    content: "Rust is a systems programming language.".to_string(),
-                },
-            },
-        ),
-        SessionEvent::new(
-            5,
-            SessionEventPayload::AssistantMessage {
-                agent: "test-agent".to_string(),
-                content: "Here's what I found about Rust.".to_string(),
-                usage: Some(Usage {
-                    prompt_tokens: 50,
-                    completion_tokens: 20,
-                    total_tokens: 70,
-                }),
-            },
-        ),
-        SessionEvent::new(
-            6,
-            SessionEventPayload::StatusChange {
-                from: SessionStatus::Active,
-                to: SessionStatus::Paused,
-            },
-        ),
-        SessionEvent::new(
-            7,
-            SessionEventPayload::Error {
-                code: "rate_limit".to_string(),
-                message: "Too many requests".to_string(),
-            },
-        ),
-        SessionEvent::new(
-            8,
-            SessionEventPayload::SessionEnd {
-                reason: SessionEndReason::Completed,
-            },
-        ),
-    ];
-
-    store.append_events(session_id, &events).await.unwrap();
-
-    let read_events = store.load_events(session_id, 0).await.unwrap();
-
-    assert_eq!(read_events.len(), 8);
-
-    // Verify each event type deserialized correctly
-    match &read_events[2].payload {
-        SessionEventPayload::ToolCall {
-            call_id,
-            tool_name,
-            arguments,
-        } => {
-            assert_eq!(call_id, "call_abc123");
-            assert_eq!(tool_name, "web_search");
-            assert_eq!(arguments["query"], "rust programming");
-        }
-        _ => panic!("expected ToolCall"),
-    }
-
-    match &read_events[3].payload {
-        SessionEventPayload::ToolResult { call_id, result } => {
-            assert_eq!(call_id, "call_abc123");
-            assert!(result.success);
-        }
-        _ => panic!("expected ToolResult"),
-    }
-
-    match &read_events[5].payload {
-        SessionEventPayload::StatusChange { from, to } => {
-            assert_eq!(*from, SessionStatus::Active);
-            assert_eq!(*to, SessionStatus::Paused);
-        }
-        _ => panic!("expected StatusChange"),
-    }
-
-    match &read_events[6].payload {
-        SessionEventPayload::Error { code, message } => {
-            assert_eq!(code, "rate_limit");
-            assert_eq!(message, "Too many requests");
-        }
-        _ => panic!("expected Error"),
-    }
-
-    match &read_events[7].payload {
-        SessionEventPayload::SessionEnd { reason } => {
-            assert_eq!(*reason, SessionEndReason::Completed);
-        }
-        _ => panic!("expected SessionEnd"),
-    }
 }
