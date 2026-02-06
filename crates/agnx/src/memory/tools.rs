@@ -138,7 +138,16 @@ impl Tool for RememberTool {
 
     async fn execute(&self, arguments: &str) -> Result<ToolResult, ToolError> {
         let args: RememberArgs = serde_json::from_str(arguments)
+            .or_else(|_| {
+                serde_json::from_value(json!({ "content": arguments.trim().trim_matches('"') }))
+            })
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
+
+        if args.content.is_empty() {
+            return Err(ToolError::InvalidArguments(
+                "content is required".to_string(),
+            ));
+        }
 
         let path = self
             .memory
@@ -198,8 +207,16 @@ impl Tool for ReflectTool {
     }
 
     async fn execute(&self, arguments: &str) -> Result<ToolResult, ToolError> {
-        let args: ReflectArgs =
-            serde_json::from_str(arguments).unwrap_or(ReflectArgs { content: None });
+        let args: ReflectArgs = serde_json::from_str(arguments).unwrap_or_else(|_| {
+            let trimmed = arguments.trim().trim_matches('"');
+            if trimmed.is_empty() {
+                ReflectArgs { content: None }
+            } else {
+                ReflectArgs {
+                    content: Some(trimmed.to_string()),
+                }
+            }
+        });
 
         match args.content {
             // Read phase: return current MEMORY.md
@@ -352,9 +369,21 @@ mod tests {
         let (_temp, memory) = setup();
         let tool = RememberTool::new(memory);
 
-        let result = tool.execute("{}").await;
-
+        let result = tool.execute("").await;
         assert!(result.is_err());
+
+        let result = tool.execute(r#""""#).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn remember_tool_fallback_raw_string() {
+        let (_temp, memory) = setup();
+        let tool = RememberTool::new(memory);
+
+        let result = tool.execute("User likes lamb satay").await.unwrap();
+        assert!(result.success);
+        assert!(result.content.contains("Remembered"));
     }
 
     #[tokio::test]
