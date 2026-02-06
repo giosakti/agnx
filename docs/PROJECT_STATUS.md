@@ -3,7 +3,7 @@
 > **Purpose:** Living status + session context. The stable vision and principles live in the [Project Charter](./202601111100.project-charter.md).
 
 ## Last Updated
-2026-02-01
+2026-02-06
 
 ## Strategic Direction
 
@@ -72,14 +72,19 @@ Key specs and design docs:
 - [x] Plugin configuration in agnx.yaml
 - [x] Trust mode (no isolation) — sandbox placeholder
 
-### v0.4.0 — Tools, Policy, Scheduling, and Memory
+### v0.4.0 — Tools, Policy, Scheduling, and Memory ✓
 - [x] Built-in bash tool
 - [x] CLI tool support (lightweight alternative to MCP)
 - [x] Tool execution policies (dangerous/ask/restrict modes, allow/deny lists)
 - [x] Scheduled tasks (one-shot, interval, cron)
 - [x] Schedule tools (`schedule_task`, `list_schedules`, `cancel_schedule`)
 - [x] Shared session cache for gateway/scheduler coordination
-- [ ] File-based memory bank
+- [x] File-based memory system (recall, remember, reflect, update_world)
+- [x] Directives system (workspace + agent scoped, file-based)
+- [x] Checkpoint-based snapshots for session persistence
+
+### v0.4.1 — Discord Gateway
+- [ ] First-party plugin: agnx-gateway-discord
 
 ### v0.5.0 — Context & Observability
 - [ ] Context window management
@@ -128,120 +133,50 @@ Key specs and design docs:
 
 ## Current Focus
 
-**v0.4.0 — Tools, Policy, Scheduling, and Memory**: Tools and scheduling complete. Memory remaining.
+**v0.4.1 — Discord Gateway**: Adding Discord as a first-party gateway plugin.
 
 ## Recent Accomplishments
 
-- **Tool execution policies** — Configurable policies for tool safety
-  - Three modes: `dangerous` (trust all), `ask` (approval for unknown), `restrict` (allow-list only)
-  - Typed allow/deny patterns (e.g., `bash:cargo*`, `mcp:github:*`)
-  - Air-gap deny list always takes precedence
-  - Policy merging (`policy.yaml` base + `policy.local.yaml` overrides)
-  - Notification support for tool execution (log, webhook)
+- **Memory system** — File-based agent memory with four tools
+  - `recall`: Retrieve relevant memories from agent's memory store
+  - `remember`: Store new memories (daily experiences, curated MEMORY.md)
+  - `reflect`: Consolidate and reorganize memories
+  - `update_world`: Update shared world knowledge facts
+  - World memory (shared across agents) + agent memory (per-agent)
 
-- **CLI tool support** — Agents can define custom script tools
-  - Lightweight alternative to MCP for simple integrations
-  - README-based documentation loaded on-demand
+- **Directives system** — File-based runtime instructions
+  - Workspace-scoped directives (`{workspace}/directives/*.md`)
+  - Agent-scoped directives (`{agent_dir}/directives/*.md`)
+  - Auto-created `memory.md` directive when memory is enabled
+  - Loaded and injected into context with proper priority ordering
 
-- **Scheduled tasks** — Agents can create time-based triggers via tool calls
-  - One-shot (`at`), interval (`every`), and cron expression timing
-  - Message payload (direct send) or task payload (execute with tools, summarize results)
-  - YAML persistence (`.agnx/schedules/{id}.yaml`) with JSONL run logs
-  - Retry with exponential backoff and jitter for transient failures
-  - Shared `ChatSessionCache` enables scheduled task results to appear in same conversation
-  - Schedule tools: `schedule_task`, `list_schedules`, `cancel_schedule`
+- **Checkpoint-based snapshots** — Improved session persistence
+  - Snapshots store only checkpointed messages (not full history)
+  - Pending messages rebuilt from events since checkpoint
+  - Reduces O(N²) snapshot I/O to O(N)
 
-- **v0.3.0 complete** — Gateway Plugins
-- Added trust mode sandbox (`Sandbox` trait + `TrustSandbox` implementation) as placeholder for tool execution
-- Implemented Gateway Protocol (`agnx-gateway-protocol` crate) for external gateway developers
-- Built Telegram gateway (`agnx-gateway-telegram`) supporting both built-in and subprocess modes
-- Refactored to workspace structure (`crates/agnx`, `crates/agnx-gateway-*`)
-- Added Gateway Manager with unified interface for built-in and subprocess gateways
-- Implemented subprocess supervision with restart policies, exponential backoff, and parent death handling
-- Added session routing (gateway + chat_id persisted in snapshots)
-- Added global agent routing rules with match conditions (gateway, chat_type, chat_id, sender_id)
-- Added agent tracking in AssistantMessage events for mid-session agent switching
+- **Session actor refactoring** — Actor model for session state
+  - Per-session actor with serialized state mutations via message passing
+  - Batched event writes + periodic snapshots
+  - Trait-based storage abstraction for pluggable backends
 
-- **v0.2.0 released** — Sessions & Durability complete
-- Implemented session persistence (JSONL events + YAML snapshots) with atomic writes
-- Added session resume with snapshot + event replay on reconnect
-- Added session disconnect behavior (`continue` / `pause`) with background continuation
-- Implemented `agnx attach` command for connecting to running/paused sessions
-- Added SSE streaming endpoint with keep-alive heartbeat and idle timeout
-- Added background task registry for graceful shutdown
-- Added HTTP client library for CLI-to-server communication
-- Comprehensive integration tests for persistence, resume, and disconnect behavior
+- **Concurrency fixes** — Various reliability improvements
+  - Atomic get-or-insert for gateway session creation
+  - Per-session serialization with concurrent gateway event processing
+  - Semaphore-limited concurrent scheduled task executions
 
-- **v0.1.0 released** — Foundation complete
-- Implemented agent spec loader (AAF: YAML + Markdown)
-- Added LLM provider abstraction (OpenRouter, OpenAI, Anthropic, Ollama)
-- Implemented basic agent executor (prompt → response)
-- Added `agnx serve` and `agnx chat` CLI commands
-- Added Sessions API (create, get, send message)
-- Added integration tests for HTTP API
-- Refactored codebase into library + binary structure
+- **v0.4.0 complete** — Tools, policy, scheduling, memory, directives, checkpoint snapshots, actor-based sessions, concurrency fixes (see milestone checklist above for details)
 
 ## Next Action
 
-- Continue v0.4.0: CLI tool support, MCP integration, memory
+- Implement v0.4.1: agnx-gateway-discord plugin
 
 ## Blockers / Known Issues / Decisions Needed
 
 - **Windows: Auto-started server may not survive CLI exit**: The launcher (`src/launcher.rs`) uses `process_group(0)` on Unix to detach the server process, but Windows lacks equivalent handling. On Windows, the auto-started server may be killed when the CLI exits. Workaround: use `agnx serve` in a separate terminal. Fix: add `CREATE_NEW_PROCESS_GROUP` via `std::os::windows::process::CommandExt`.
 - **State Synchronization**: `SessionStore` maintains parallel in-memory state while persistence logic is distributed across handlers and streaming code. Risk: forgetting to persist causes state drift on crash. Options: (1) write-through cache in SessionStore, or (2) SessionService layer that wraps store + persistence together. Recommendation: SessionService keeps the store simple (sync, easy to test) while centralizing persistence calls.
-- **Snapshot Data Duplication**: `state.yaml` stores full conversation history, duplicating `events.jsonl`. For N messages, naive snapshots cause O(N²) total I/O. Options and tradeoffs:
-  - *Periodic checkpointing* (snapshot every K events) — O(N²) → O(N) I/O; recovery replays events since checkpoint; **recommended first step**
-  - *Sliding window* — bounds memory; loses old context
-  - *Summary-based* — bounds memory + I/O; lossy compression
+- **Snapshot Data Duplication**: ~~`state.yaml` stores full conversation history, duplicating `events.jsonl`.~~ **Resolved** — checkpoint-based snapshots now store only checkpointed messages; pending messages rebuilt from events since checkpoint.
 
 ## Session Notes
 
-**2026-01-24 — Additional analysis**
-
-**Patterns to Adopt:**
-- **Agent routing table**: First match wins; flat match object; extensible fields; user controls specificity via ordering
-- **Hot reload with validation**: File watcher + schema validation + per-component restart (no full restart)
-- **Exec approval workflow**: Interactive approval for dangerous tools (bash, file writes)
-- **Tool streaming**: Chunk tool results for real-time feedback via SSE
-- **Structured logging**: JSONL with subsystem hierarchy; add from day one
-
-**Patterns to Avoid:**
-- **Monolithic process**: All channels/agents in one process; crash affects everything → Agnx uses subprocess plugins
-- **File lock contention**: Synchronous file locks block event loop → use non-blocking `flock` or DB advisory locks
-- **Unbounded session growth**: JSONL grows forever → add compaction policy with pruning
-- **Config complexity**: Large schema, scattered docs → start minimal, fail fast with clear errors
-- **No observability**: No metrics/tracing/alerting → add OpenTelemetry from day one
-- **Type erosion**: `Record<string, any>` for flexibility → Rust's type system prevents this
-
-**2026-01-24 — Gateway & Session Refinement**
-
-Finalized gateway architecture:
-- **Core gateways** (built-in): CLI/TUI, HTTP REST, SSE — these are protocols, not platforms
-- **Platform gateways** (plugins): Telegram, Discord, Slack run as subprocess plugins via Gateway Protocol (JSON over stdio)
-- Removed WebSocket — SSE is sufficient for LLM streaming, simpler to implement and proxy
-
-Session disconnect behavior:
-- `on_disconnect: continue` — agent keeps executing, buffers output (for async/supervisor workflows)
-- `on_disconnect: pause` — agent pauses at next safe point (for interactive chat)
-- Configurable per-agent in `agent.yaml`, with global defaults in `agnx.yaml`
-
-This enables the key use case: "fire and forget" tasks where user disconnects and agent continues working, notifies when done.
-
-**2025-01-23 — Strategic Direction Update**
-
-Killer feature direction: **Sessions that survive crashes, restarts, and disconnects**
-- Terminal attachment (`agnx attach`) — SSH-like connection to agent sessions
-- Session persistence — conversation + sandbox state survives disconnects
-- Pluggable sandboxes — bubblewrap (light) → Docker → cloud
-
-**Agent Orchestration Direction**
-
-Rather than competing with Claude Code, OpenCode, Aider, etc., Agnx will **orchestrate** them:
-- Supervisor agent runs on Agnx (always-on, async)
-- Delegates coding tasks to Claude Code (headless mode: `claude -p "task" --output-format json`)
-- Reviews worker output before approving (LLM-based review loop)
-- User doesn't need to be at terminal — supervisor handles it
-
-Key insight: Claude Code supports headless mode with `--output-format json` and `--resume` for session continuity. Agnx can invoke and supervise it programmatically.
-
-This positions Agnx as **infrastructure that makes any agent better** — not another agent competing for users.
+*Older notes (v0.1–v0.3 design decisions) archived — see git history for details.*
