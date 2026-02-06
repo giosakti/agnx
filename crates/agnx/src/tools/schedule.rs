@@ -128,29 +128,29 @@ pub fn schedule_task_definition() -> ToolDefinition {
         tool_type: "function".to_string(),
         function: FunctionDefinition {
             name: "schedule_task".to_string(),
-            description: "Schedule a task or message for later delivery. Use this to create reminders, scheduled checks, or recurring tasks.".to_string(),
+            description: "Schedule a one-shot reminder or recurring task. For reminders and one-time actions, use 'at'. Only use 'cron' or 'every_seconds' when the user explicitly asks for something recurring.".to_string(),
             parameters: Some(serde_json::json!({
                 "type": "object",
                 "properties": {
                     "at": {
                         "type": "string",
-                        "description": "One-shot: ISO8601 timestamp for when to fire (e.g., '2026-01-30T16:00:00Z')"
+                        "description": "One-shot (preferred for reminders): ISO8601 timestamp for when to fire (e.g., '2026-01-30T16:00:00Z'). Fires once then auto-completes."
                     },
                     "every_seconds": {
                         "type": "integer",
-                        "description": "Recurring: Interval in seconds (e.g., 3600 for hourly, 1800 for every 30 minutes)"
+                        "description": "Recurring: Interval in seconds. Only use when user explicitly wants repetition."
                     },
                     "cron": {
                         "type": "string",
-                        "description": "Recurring: Cron expression (e.g., '0 9 * * MON-FRI' for 9am weekdays)"
+                        "description": "Recurring: Cron expression (e.g., '0 9 * * MON-FRI'). Only use when user explicitly wants a recurring schedule."
                     },
                     "message": {
                         "type": "string",
-                        "description": "Simple message to send (no tools, just delivers the text)"
+                        "description": "Simple message to deliver (no LLM call, just sends the text)"
                     },
                     "task": {
                         "type": "string",
-                        "description": "Task to execute with tools, summarize, and report results"
+                        "description": "Task to execute with LLM and tools, then report results"
                     },
                     "max_retries": {
                         "type": "integer",
