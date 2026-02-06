@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-02-06
+
+### Added
+- File-based memory system with four agent tools
+  - `recall`: Retrieve relevant memories from agent's memory store
+  - `remember`: Store new daily experiences
+  - `reflect`: Consolidate experiences and curate MEMORY.md
+  - `update_world`: Update shared world knowledge facts
+  - World memory (shared across agents) + agent memory (per-agent)
+- Directives system for runtime instructions
+  - Workspace-scoped directives (`{workspace}/directives/*.md`)
+  - Agent-scoped directives (`{agent_dir}/directives/*.md`)
+  - Auto-created `memory.md` directive when memory is enabled
+  - Priority-based ordering in context builder
+- Built-in bash tool with sandbox execution
+- CLI tool support (lightweight alternative to MCP)
+  - Script-based tool definitions in agent config
+  - README-based documentation loaded on-demand
+- Tool execution policies
+  - Three modes: `dangerous` (trust all), `ask` (approval for unknown), `restrict` (allow-list only)
+  - Typed allow/deny patterns (e.g., `bash:cargo*`, `mcp:github:*`)
+  - Policy merging (`policy.yaml` base + `policy.local.yaml` overrides)
+  - Notification support for tool execution (log, webhook)
+- Scheduled tasks with agent-initiated creation via tools
+  - One-shot (`at`), interval (`every`), and cron expression timing
+  - Message payload (direct send) or task payload (execute with tools)
+  - YAML persistence with JSONL run logs
+  - Retry with exponential backoff and jitter
+  - Schedule tools: `schedule_task`, `list_schedules`, `cancel_schedule`
+- Shared `ChatSessionCache` for gateway/scheduler session coordination
+- Checkpoint-based snapshots for session persistence
+  - Snapshots store only checkpointed messages (not full history)
+  - Pending messages rebuilt from events since checkpoint
+  - Reduces O(N²) snapshot I/O to O(N)
+- Soul field for agent personality in agent spec
+
+### Changed
+- Session management refactored to actor model
+  - Per-session actor with serialized state mutations via message passing
+  - Batched event writes + periodic snapshots
+  - Trait-based storage abstraction for pluggable backends
+- Tool executor refactored to trait-based design for extensibility
+- Context builder now uses structured blocks with provenance tracking and priority ordering
+
+### Fixed
+- Atomic get-or-insert for gateway session creation (race condition)
+- Per-session serialization with concurrent gateway event processing
+- Semaphore-limited concurrent scheduled task executions (prevents LLM call storms)
+
 ## [0.3.0] - 2026-01-29
 
 ### Added
@@ -86,7 +135,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Project documentation (architecture, API reference, deployment guide)
 - Agnx Agent Format (AAF) specification
 
-[Unreleased]: https://github.com/AgnxAI/agnx/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/AgnxAI/agnx/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/AgnxAI/agnx/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/AgnxAI/agnx/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/AgnxAI/agnx/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/AgnxAI/agnx/compare/v0.0.1...v0.1.0
