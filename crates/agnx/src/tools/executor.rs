@@ -3,6 +3,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use tracing::debug;
+
 use super::error::ToolError;
 use super::notify::send_notification;
 use super::tool::Tool;
@@ -184,6 +186,11 @@ impl ToolExecutor {
         invocation: &str,
     ) -> Result<ToolResult, ToolError> {
         // Execute the tool
+        debug!(
+            tool = %tool_call.function.name,
+            arguments = %tool_call.function.arguments,
+            "Executing tool"
+        );
         let result = tool.execute(&tool_call.function.arguments).await;
 
         // Send notification if configured
