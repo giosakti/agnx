@@ -80,7 +80,7 @@ async fn login_anthropic() -> Result<()> {
     );
     println!();
     println!("You can now use Anthropic models without setting ANTHROPIC_API_KEY.");
-    println!("API key (if set) takes precedence over OAuth credentials.");
+    println!("OAuth credentials take precedence over API key (if set).");
 
     Ok(())
 }
