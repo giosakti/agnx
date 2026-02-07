@@ -40,7 +40,13 @@ pub enum SessionEventPayload {
     /// Session ended (completed or terminated).
     SessionEnd { reason: SessionEndReason },
     /// User sent a message.
-    UserMessage { content: String },
+    UserMessage {
+        content: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sender_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sender_name: Option<String>,
+    },
     /// Assistant (LLM) responded.
     AssistantMessage {
         /// Which agent produced this response.
@@ -126,7 +132,7 @@ impl SessionEvent {
     /// Convert this event to a Message if it represents a chat message.
     pub fn to_message(&self) -> Option<Message> {
         match &self.payload {
-            SessionEventPayload::UserMessage { content } => {
+            SessionEventPayload::UserMessage { content, .. } => {
                 Some(Message::text(Role::User, content))
             }
             SessionEventPayload::AssistantMessage { content, .. } => {
@@ -147,6 +153,8 @@ mod tests {
             1,
             SessionEventPayload::UserMessage {
                 content: "Hello".to_string(),
+                sender_id: None,
+                sender_name: None,
             },
         );
 
@@ -228,6 +236,8 @@ mod tests {
             1,
             SessionEventPayload::UserMessage {
                 content: "Hello".to_string(),
+                sender_id: None,
+                sender_name: None,
             },
         );
         let msg = user_event.to_message().unwrap();

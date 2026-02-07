@@ -27,6 +27,8 @@ pub enum SessionCommand {
     // Write operations
     AddUserMessage {
         content: String,
+        sender_id: Option<String>,
+        sender_name: Option<String>,
         reply: oneshot::Sender<Result<u64, ActorError>>,
     },
     AddAssistantMessage {
