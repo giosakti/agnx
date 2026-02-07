@@ -1,3 +1,4 @@
+#![cfg(feature = "server")]
 //! Integration tests for session persistence using FileSessionStore.
 
 use chrono::Utc;

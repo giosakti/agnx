@@ -1,3 +1,4 @@
+#![cfg(feature = "server")]
 //! Common test utilities.
 
 use std::sync::Arc;

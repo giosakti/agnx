@@ -7,13 +7,14 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["gateway-telegram"]
-gateway-discord = ["dep:duragent-gateway-discord"]
-gateway-telegram = ["dep:duragent-gateway-telegram"]
+default = ["server"]
+server = ["dep:axum", "dep:tower-http", "dep:duragent-gateway-protocol"]
+gateway-discord = ["server", "dep:duragent-gateway-discord"]
+gateway-telegram = ["server", "dep:duragent-gateway-telegram"]
 
 [dependencies]
 # Workspace crates
-duragent-gateway-protocol = { workspace = true }
+duragent-gateway-protocol = { workspace = true, optional = true }
 duragent-gateway-discord = { workspace = true, optional = true }
 duragent-gateway-telegram = { workspace = true, optional = true }
 
@@ -38,8 +39,8 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 
 # HTTP server
-axum = { workspace = true }
-tower-http = { workspace = true }
+axum = { workspace = true, optional = true }
+tower-http = { workspace = true, optional = true }
 
 # HTTP client
 reqwest = { workspace = true }
@@ -74,3 +75,4 @@ path = "src/lib.rs"
 [[bin]]
 name = "duragent"
 path = "src/main.rs"
+required-features = ["server"]

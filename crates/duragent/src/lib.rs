@@ -1,42 +1,45 @@
 //! Duragent - A minimal and fast self-hosted runtime for durable and portable AI agents.
 
 // ============================================================================
-// Core Infrastructure
-// ============================================================================
-
-pub mod auth;
-pub mod build_info;
-pub mod config;
-pub mod store;
-pub mod sync;
-
-// ============================================================================
-// Server & HTTP
+// Always Available
 // ============================================================================
 
 pub mod api;
-pub mod handlers;
-pub mod server;
+pub mod auth;
+pub mod build_info;
+pub mod client;
+pub mod config;
+pub mod launcher;
+pub mod llm;
 pub mod sse_parser;
 
 // ============================================================================
-// Domain
+// Server-only (behind `server` feature)
 // ============================================================================
 
+#[cfg(feature = "server")]
 pub mod agent;
-pub mod context;
-pub mod gateway;
-pub mod llm;
-pub mod memory;
-pub mod sandbox;
-pub mod scheduler;
-pub mod session;
-pub mod tools;
-
-// ============================================================================
-// Client & Utilities
-// ============================================================================
-
+#[cfg(feature = "server")]
 pub mod background;
-pub mod client;
-pub mod launcher;
+#[cfg(feature = "server")]
+pub mod context;
+#[cfg(feature = "server")]
+pub mod gateway;
+#[cfg(feature = "server")]
+pub mod handlers;
+#[cfg(feature = "server")]
+pub mod memory;
+#[cfg(feature = "server")]
+pub mod sandbox;
+#[cfg(feature = "server")]
+pub mod scheduler;
+#[cfg(feature = "server")]
+pub mod server;
+#[cfg(feature = "server")]
+pub mod session;
+#[cfg(feature = "server")]
+pub mod store;
+#[cfg(feature = "server")]
+pub mod sync;
+#[cfg(feature = "server")]
+pub mod tools;

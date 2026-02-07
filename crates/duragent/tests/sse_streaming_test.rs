@@ -1,3 +1,4 @@
+#![cfg(feature = "server")]
 //! Integration tests for SSE streaming endpoint.
 //!
 //! Tests the `/api/v1/sessions/{session_id}/stream` endpoint behavior.

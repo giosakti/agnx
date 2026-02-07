@@ -1,3 +1,4 @@
+#![cfg(feature = "server")]
 //! Integration tests for the HTTP API.
 
 use axum::body::Body;
