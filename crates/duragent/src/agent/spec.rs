@@ -151,6 +151,12 @@ pub struct GroupAccessConfig {
     pub sender_default: SenderDisposition,
     #[serde(default)]
     pub sender_overrides: HashMap<String, SenderDisposition>,
+    /// How the agent is activated in groups.
+    #[serde(default)]
+    pub activation: ActivationMode,
+    /// Configuration for the context buffer (silent messages injected on trigger).
+    #[serde(default)]
+    pub context_buffer: ContextBufferConfig,
 }
 
 impl Default for GroupAccessConfig {
@@ -160,6 +166,8 @@ impl Default for GroupAccessConfig {
             allowlist: Vec::new(),
             sender_default: SenderDisposition::Allow,
             sender_overrides: HashMap::new(),
+            activation: ActivationMode::default(),
+            context_buffer: ContextBufferConfig::default(),
         }
     }
 }
@@ -190,6 +198,60 @@ pub enum SenderDisposition {
     Silent,
     /// Message is discarded entirely.
     Block,
+}
+
+/// Activation mode for group messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivationMode {
+    /// Only respond when @mentioned or replied to (default).
+    #[default]
+    Mention,
+    /// Respond to every allowed message.
+    Always,
+}
+
+/// How non-triggering messages from `Allow` senders are stored in mention mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextBufferMode {
+    /// Ephemeral buffer: stored as SilentMessage, injected as a system block on trigger.
+    #[default]
+    Silent,
+    /// Durable: stored as UserMessage in conversation history (no injection needed).
+    Passive,
+}
+
+/// Configuration for the context buffer (messages from non-triggering senders).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ContextBufferConfig {
+    /// How non-triggering messages are stored.
+    #[serde(default)]
+    pub mode: ContextBufferMode,
+    /// Maximum number of recent silent messages to inject as context.
+    #[serde(default = "default_max_messages")]
+    pub max_messages: usize,
+    /// Maximum age in hours for context buffer messages.
+    #[serde(default = "default_max_age_hours")]
+    pub max_age_hours: u64,
+}
+
+impl Default for ContextBufferConfig {
+    fn default() -> Self {
+        Self {
+            mode: ContextBufferMode::default(),
+            max_messages: default_max_messages(),
+            max_age_hours: default_max_age_hours(),
+        }
+    }
+}
+
+fn default_max_messages() -> usize {
+    100
+}
+
+fn default_max_age_hours() -> u64 {
+    24
 }
 
 /// Memory configuration for an agent.
@@ -665,6 +727,231 @@ spec:
         assert_eq!(
             access.groups.sender_overrides.get("99999"),
             Some(&SenderDisposition::Block)
+        );
+    }
+
+    #[tokio::test]
+    async fn load_agent_with_activation_mode_and_context_buffer() {
+        let tmp = TempDir::new().unwrap();
+        let agents_dir = tmp.path().join("agents");
+        std::fs::create_dir(&agents_dir).unwrap();
+
+        let agent_dir = agents_dir.join("mention-agent");
+        std::fs::create_dir(&agent_dir).unwrap();
+
+        write_yaml(
+            &agent_dir,
+            r#"apiVersion: duragent/v1alpha1
+kind: Agent
+metadata:
+  name: mention-agent
+spec:
+  model:
+    provider: openrouter
+    name: anthropic/claude-sonnet-4
+  access:
+    groups:
+      policy: open
+      activation: mention
+      context_buffer:
+        max_messages: 50
+        max_age_hours: 12
+"#,
+        );
+
+        let agent = load_agent(&agents_dir, "mention-agent").await.unwrap();
+        let access = agent.access.unwrap();
+        assert_eq!(access.groups.activation, ActivationMode::Mention);
+        assert_eq!(access.groups.context_buffer.max_messages, 50);
+        assert_eq!(access.groups.context_buffer.max_age_hours, 12);
+    }
+
+    #[tokio::test]
+    async fn load_agent_with_activation_always() {
+        let tmp = TempDir::new().unwrap();
+        let agents_dir = tmp.path().join("agents");
+        std::fs::create_dir(&agents_dir).unwrap();
+
+        let agent_dir = agents_dir.join("always-agent");
+        std::fs::create_dir(&agent_dir).unwrap();
+
+        write_yaml(
+            &agent_dir,
+            r#"apiVersion: duragent/v1alpha1
+kind: Agent
+metadata:
+  name: always-agent
+spec:
+  model:
+    provider: openrouter
+    name: anthropic/claude-sonnet-4
+  access:
+    groups:
+      activation: always
+"#,
+        );
+
+        let agent = load_agent(&agents_dir, "always-agent").await.unwrap();
+        let access = agent.access.unwrap();
+        assert_eq!(access.groups.activation, ActivationMode::Always);
+        // Defaults
+        assert_eq!(access.groups.context_buffer.max_messages, 100);
+        assert_eq!(access.groups.context_buffer.max_age_hours, 24);
+    }
+
+    #[tokio::test]
+    async fn load_agent_activation_defaults_to_mention() {
+        let tmp = TempDir::new().unwrap();
+        let agents_dir = tmp.path().join("agents");
+        std::fs::create_dir(&agents_dir).unwrap();
+
+        let agent_dir = agents_dir.join("default-agent");
+        std::fs::create_dir(&agent_dir).unwrap();
+
+        write_yaml(
+            &agent_dir,
+            r#"apiVersion: duragent/v1alpha1
+kind: Agent
+metadata:
+  name: default-agent
+spec:
+  model:
+    provider: openrouter
+    name: anthropic/claude-sonnet-4
+  access:
+    groups:
+      policy: open
+"#,
+        );
+
+        let agent = load_agent(&agents_dir, "default-agent").await.unwrap();
+        let access = agent.access.unwrap();
+        assert_eq!(access.groups.activation, ActivationMode::Mention);
+    }
+
+    #[test]
+    fn activation_mode_serialization() {
+        assert_eq!(
+            serde_json::to_string(&ActivationMode::Mention).unwrap(),
+            "\"mention\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ActivationMode::Always).unwrap(),
+            "\"always\""
+        );
+    }
+
+    #[tokio::test]
+    async fn load_agent_with_context_buffer_mode_silent() {
+        let tmp = TempDir::new().unwrap();
+        let agents_dir = tmp.path().join("agents");
+        std::fs::create_dir(&agents_dir).unwrap();
+
+        let agent_dir = agents_dir.join("silent-agent");
+        std::fs::create_dir(&agent_dir).unwrap();
+
+        write_yaml(
+            &agent_dir,
+            r#"apiVersion: duragent/v1alpha1
+kind: Agent
+metadata:
+  name: silent-agent
+spec:
+  model:
+    provider: openrouter
+    name: anthropic/claude-sonnet-4
+  access:
+    groups:
+      activation: mention
+      context_buffer:
+        mode: silent
+        max_messages: 50
+"#,
+        );
+
+        let agent = load_agent(&agents_dir, "silent-agent").await.unwrap();
+        let access = agent.access.unwrap();
+        assert_eq!(access.groups.context_buffer.mode, ContextBufferMode::Silent);
+        assert_eq!(access.groups.context_buffer.max_messages, 50);
+    }
+
+    #[tokio::test]
+    async fn load_agent_with_context_buffer_mode_passive() {
+        let tmp = TempDir::new().unwrap();
+        let agents_dir = tmp.path().join("agents");
+        std::fs::create_dir(&agents_dir).unwrap();
+
+        let agent_dir = agents_dir.join("passive-agent");
+        std::fs::create_dir(&agent_dir).unwrap();
+
+        write_yaml(
+            &agent_dir,
+            r#"apiVersion: duragent/v1alpha1
+kind: Agent
+metadata:
+  name: passive-agent
+spec:
+  model:
+    provider: openrouter
+    name: anthropic/claude-sonnet-4
+  access:
+    groups:
+      activation: mention
+      context_buffer:
+        mode: passive
+"#,
+        );
+
+        let agent = load_agent(&agents_dir, "passive-agent").await.unwrap();
+        let access = agent.access.unwrap();
+        assert_eq!(
+            access.groups.context_buffer.mode,
+            ContextBufferMode::Passive
+        );
+    }
+
+    #[tokio::test]
+    async fn load_agent_context_buffer_mode_defaults_to_silent() {
+        let tmp = TempDir::new().unwrap();
+        let agents_dir = tmp.path().join("agents");
+        std::fs::create_dir(&agents_dir).unwrap();
+
+        let agent_dir = agents_dir.join("default-mode-agent");
+        std::fs::create_dir(&agent_dir).unwrap();
+
+        write_yaml(
+            &agent_dir,
+            r#"apiVersion: duragent/v1alpha1
+kind: Agent
+metadata:
+  name: default-mode-agent
+spec:
+  model:
+    provider: openrouter
+    name: anthropic/claude-sonnet-4
+  access:
+    groups:
+      activation: mention
+      context_buffer:
+        max_messages: 75
+"#,
+        );
+
+        let agent = load_agent(&agents_dir, "default-mode-agent").await.unwrap();
+        let access = agent.access.unwrap();
+        assert_eq!(access.groups.context_buffer.mode, ContextBufferMode::Silent);
+        assert_eq!(access.groups.context_buffer.max_messages, 75);
+    }
+
+    #[test]
+    fn context_buffer_mode_serialization() {
+        assert_eq!(
+            serde_json::to_string(&ContextBufferMode::Silent).unwrap(),
+            "\"silent\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ContextBufferMode::Passive).unwrap(),
+            "\"passive\""
         );
     }
 
