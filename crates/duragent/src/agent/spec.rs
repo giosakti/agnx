@@ -150,9 +150,7 @@ pub struct GroupAccessConfig {
     #[serde(default)]
     pub sender_default: SenderDisposition,
     #[serde(default)]
-    pub sender_allowlist: Vec<String>,
-    #[serde(default)]
-    pub sender_blocklist: Vec<String>,
+    pub sender_overrides: HashMap<String, SenderDisposition>,
 }
 
 impl Default for GroupAccessConfig {
@@ -161,8 +159,7 @@ impl Default for GroupAccessConfig {
             policy: GroupPolicy::Open,
             allowlist: Vec::new(),
             sender_default: SenderDisposition::Allow,
-            sender_allowlist: Vec::new(),
-            sender_blocklist: Vec::new(),
+            sender_overrides: HashMap::new(),
         }
     }
 }
@@ -647,9 +644,10 @@ spec:
     groups:
       policy: allowlist
       allowlist: ["-100123456"]
-      sender_default: passive
-      sender_allowlist: ["67890"]
-      sender_blocklist: ["99999"]
+      sender_default: silent
+      sender_overrides:
+        "67890": passive
+        "99999": block
 "#,
         );
 
@@ -659,9 +657,15 @@ spec:
         assert_eq!(access.dm.allowlist, vec!["12345"]);
         assert_eq!(access.groups.policy, GroupPolicy::Allowlist);
         assert_eq!(access.groups.allowlist, vec!["-100123456"]);
-        assert_eq!(access.groups.sender_default, SenderDisposition::Passive);
-        assert_eq!(access.groups.sender_allowlist, vec!["67890"]);
-        assert_eq!(access.groups.sender_blocklist, vec!["99999"]);
+        assert_eq!(access.groups.sender_default, SenderDisposition::Silent);
+        assert_eq!(
+            access.groups.sender_overrides.get("67890"),
+            Some(&SenderDisposition::Passive)
+        );
+        assert_eq!(
+            access.groups.sender_overrides.get("99999"),
+            Some(&SenderDisposition::Block)
+        );
     }
 
     #[tokio::test]

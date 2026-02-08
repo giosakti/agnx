@@ -33,21 +33,16 @@ pub fn check_access(
 
 /// Resolve the disposition for a sender within an allowed group.
 ///
-/// Resolution order:
-/// 1. `sender_blocklist` match → Block
-/// 2. `sender_allowlist` match → Allow
-/// 3. Fall back to `sender_default`
+/// Checks `sender_overrides` first, falls back to `sender_default`.
 pub fn resolve_sender_disposition(
     groups: &GroupAccessConfig,
     sender_id: &str,
 ) -> SenderDisposition {
-    if groups.sender_blocklist.iter().any(|id| id == sender_id) {
-        return SenderDisposition::Block;
-    }
-    if groups.sender_allowlist.iter().any(|id| id == sender_id) {
-        return SenderDisposition::Allow;
-    }
-    groups.sender_default
+    groups
+        .sender_overrides
+        .get(sender_id)
+        .copied()
+        .unwrap_or(groups.sender_default)
 }
 
 #[cfg(test)]
@@ -179,25 +174,14 @@ mod tests {
     }
 
     #[test]
-    fn sender_blocklist_takes_priority() {
-        let groups = GroupAccessConfig {
-            sender_default: SenderDisposition::Allow,
-            sender_allowlist: vec!["user1".to_string()],
-            sender_blocklist: vec!["user1".to_string()],
-            ..Default::default()
-        };
-        // blocklist wins over allowlist
-        assert_eq!(
-            resolve_sender_disposition(&groups, "user1"),
-            SenderDisposition::Block
-        );
-    }
+    fn sender_override_takes_priority_over_default() {
+        let mut overrides = std::collections::HashMap::new();
+        overrides.insert("vip".to_string(), SenderDisposition::Allow);
+        overrides.insert("spammer".to_string(), SenderDisposition::Block);
 
-    #[test]
-    fn sender_allowlist_overrides_default() {
         let groups = GroupAccessConfig {
-            sender_default: SenderDisposition::Passive,
-            sender_allowlist: vec!["vip".to_string()],
+            sender_default: SenderDisposition::Silent,
+            sender_overrides: overrides,
             ..Default::default()
         };
         assert_eq!(
@@ -205,8 +189,32 @@ mod tests {
             SenderDisposition::Allow
         );
         assert_eq!(
-            resolve_sender_disposition(&groups, "other"),
+            resolve_sender_disposition(&groups, "spammer"),
+            SenderDisposition::Block
+        );
+        assert_eq!(
+            resolve_sender_disposition(&groups, "someone_else"),
+            SenderDisposition::Silent
+        );
+    }
+
+    #[test]
+    fn sender_override_passive() {
+        let mut overrides = std::collections::HashMap::new();
+        overrides.insert("observer".to_string(), SenderDisposition::Passive);
+
+        let groups = GroupAccessConfig {
+            sender_default: SenderDisposition::Allow,
+            sender_overrides: overrides,
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_sender_disposition(&groups, "observer"),
             SenderDisposition::Passive
+        );
+        assert_eq!(
+            resolve_sender_disposition(&groups, "anyone_else"),
+            SenderDisposition::Allow
         );
     }
 
