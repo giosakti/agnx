@@ -267,6 +267,10 @@ pub struct ServerConfig {
     /// If not set, admin endpoints only accept requests from localhost.
     #[serde(default)]
     pub admin_token: Option<String>,
+    /// Optional API token. If set, API endpoints require this token.
+    /// If not set, API endpoints only accept requests from localhost.
+    #[serde(default)]
+    pub api_token: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -278,6 +282,7 @@ impl Default for ServerConfig {
             idle_timeout_seconds: default_idle_timeout(),
             keep_alive_interval_seconds: default_keep_alive_interval(),
             admin_token: None,
+            api_token: None,
         }
     }
 }

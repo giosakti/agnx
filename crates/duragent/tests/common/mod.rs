@@ -1,9 +1,11 @@
 #![cfg(feature = "server")]
 //! Common test utilities.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Router;
+use axum::extract::connect_info::MockConnectInfo;
 use tokio::sync::Mutex;
 
 use duragent::agent::AgentStore;
@@ -48,6 +50,7 @@ pub async fn test_app_state() -> AppState {
         scheduler: None,
         policy_locks: duragent::sync::KeyedLocks::new(),
         admin_token: None,
+        api_token: None,
         idle_timeout_seconds: 60,
         keep_alive_interval_seconds: 15,
         background_tasks: BackgroundTasks::new(),
@@ -56,9 +59,13 @@ pub async fn test_app_state() -> AppState {
 }
 
 /// Create a test app with empty state.
+///
+/// Adds a `MockConnectInfo` layer with a loopback address so auth
+/// middleware works in tests (localhost passes the "no token" fallback).
 pub async fn test_app() -> Router {
     let state = test_app_state().await;
-    server::build_app(state, 300)
+    let loopback: SocketAddr = ([127, 0, 0, 1], 0).into();
+    server::build_app(state, 300).layer(MockConnectInfo(loopback))
 }
 
 /// Create an empty agent store.

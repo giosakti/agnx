@@ -235,6 +235,7 @@ pub async fn run(
         scheduler: Some(scheduler_handle.clone()),
         policy_locks,
         admin_token: config.server.admin_token.clone(),
+        api_token: config.server.api_token.clone(),
         idle_timeout_seconds: config.server.idle_timeout_seconds,
         keep_alive_interval_seconds: config.server.keep_alive_interval_seconds,
         background_tasks: background_tasks.clone(),
