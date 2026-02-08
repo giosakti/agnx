@@ -506,9 +506,8 @@ fn chunk_message(content: &str) -> Vec<&str> {
         }
 
         // Try to split at a newline within the limit
-        let split_at = remaining[..MAX_MESSAGE_LENGTH]
-            .rfind('\n')
-            .unwrap_or(MAX_MESSAGE_LENGTH);
+        let boundary = remaining.floor_char_boundary(MAX_MESSAGE_LENGTH);
+        let split_at = remaining[..boundary].rfind('\n').unwrap_or(boundary);
 
         let (chunk, rest) = remaining.split_at(split_at);
         chunks.push(chunk);
