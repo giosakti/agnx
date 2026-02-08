@@ -1,6 +1,7 @@
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
+use sha2::{Digest, Sha256};
 use tokio::fs;
 
 use serde::Deserialize;
@@ -74,6 +75,24 @@ pub fn resolve_path(config_path: &Path, path: &Path) -> PathBuf {
 
     let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
     config_dir.join(path)
+}
+
+/// Compute a SHA-256 hash of the canonical workspace path.
+///
+/// Used to identify which workspace a server is serving, without exposing the
+/// actual filesystem path. Both the server and launcher compute this independently
+/// to verify they agree on the workspace.
+pub fn compute_workspace_hash(config_path: &Path, config: &Config) -> String {
+    let workspace_raw = config
+        .workspace
+        .as_deref()
+        .unwrap_or(Path::new(DEFAULT_WORKSPACE));
+    let workspace = resolve_path(config_path, workspace_raw);
+    let canonical = workspace.canonicalize().unwrap_or(workspace);
+    format!(
+        "{:x}",
+        Sha256::digest(canonical.to_string_lossy().as_bytes())
+    )
 }
 
 // ============================================================================

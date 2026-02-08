@@ -46,6 +46,7 @@ pub async fn test_app_state() -> AppState {
             world_memory_path: tmp.path().join("memory/world"),
             workspace_directives_path: tmp.path().join("directives"),
             chat_session_cache: ChatSessionCache::new(),
+            workspace_hash: "test".to_string(),
         },
         scheduler: None,
         policy_locks: duragent::sync::KeyedLocks::new(),

@@ -34,6 +34,7 @@ pub struct RuntimeServices {
     pub world_memory_path: PathBuf,
     pub workspace_directives_path: PathBuf,
     pub chat_session_cache: ChatSessionCache,
+    pub workspace_hash: String,
 }
 
 // ============================================================================
@@ -111,12 +112,13 @@ pub fn build_app(state: AppState, request_timeout_seconds: u64) -> Router {
     // Admin routes (no timeout, state required for shutdown)
     let admin_routes = Router::new()
         .route("/shutdown", post(handlers::shutdown))
-        .with_state(state);
+        .with_state(state.clone());
 
     Router::new()
         .route("/livez", get(handlers::livez))
         .route("/readyz", get(handlers::readyz))
         .route("/version", get(handlers::version))
+        .with_state(state)
         .nest("/api/v1", api_v1)
         .nest("/api/admin/v1", admin_routes)
 }
