@@ -6,15 +6,23 @@
 //! For agents with tools configured, messages are processed through the
 //! agentic loop which supports tool execution and the approval flow.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
+use tokio::time::Instant;
 use tracing::{debug, error, warn};
 
 use duragent_gateway_protocol::{
     CallbackQueryData, MessageContent, MessageReceivedData, RoutingContext, Sender,
 };
 
+use super::queue::{
+    DrainResult, EnqueueResult, QueuedMessage, SessionMessageQueues, combine_messages,
+};
 use super::{MessageHandler, build_approval_keyboard};
-use crate::agent::{ActivationMode, ContextBufferConfig, ContextBufferMode, PolicyLocks};
+use crate::agent::{
+    ActivationMode, ContextBufferConfig, ContextBufferMode, PolicyLocks, QueueConfig,
+};
 use crate::api::SessionStatus;
 use crate::config::{RoutingMatch, RoutingRule};
 use crate::context::{BlockSource, ContextBuilder, SystemBlock, load_all_directives, priority};
@@ -72,8 +80,10 @@ pub struct GatewayMessageHandler {
     services: RuntimeServices,
     /// Shared cache mapping (gateway, chat_id, agent) to session_id.
     chat_session_cache: ChatSessionCache,
-    /// Per-session locks to serialize message and callback processing.
+    /// Per-session locks to serialize callback query processing.
     message_locks: KeyedLocks,
+    /// Per-session message queues for concurrent message handling.
+    session_queues: SessionMessageQueues,
     /// Routing configuration for agent selection.
     routing_config: RoutingConfig,
     /// Per-agent locks for policy file writes.
@@ -85,10 +95,16 @@ pub struct GatewayMessageHandler {
 impl GatewayMessageHandler {
     /// Create a new gateway message handler.
     pub fn new(config: GatewayHandlerConfig) -> Self {
+        let session_queues = SessionMessageQueues::new();
+        session_queues
+            .clone()
+            .spawn_cleanup_task("gateway_session_queues");
+
         Self {
             services: config.services,
             chat_session_cache: config.chat_session_cache,
-            message_locks: KeyedLocks::with_cleanup("gateway_message_locks"),
+            message_locks: KeyedLocks::with_cleanup("gateway_callback_locks"),
+            session_queues,
             routing_config: config.routing_config,
             policy_locks: config.policy_locks,
             scheduler: config.scheduler,
@@ -294,6 +310,130 @@ impl GatewayMessageHandler {
         Some(&access.groups.context_buffer)
     }
 
+    /// Resolve the queue config for a message based on chat type.
+    ///
+    /// Group chats use the agent's configured queue settings.
+    /// DMs use default config (effectively a simple mutex).
+    fn resolve_queue_config(
+        &self,
+        handle: &SessionHandle,
+        routing: &RoutingContext,
+    ) -> QueueConfig {
+        if is_group_chat(&routing.chat_type)
+            && let Some(agent) = self.services.agents.get(handle.agent())
+            && let Some(ref access) = agent.access
+        {
+            return access.groups.queue.clone();
+        }
+        QueueConfig::default()
+    }
+
+    /// Process a queued message and return the response text.
+    ///
+    /// This handles the actual message processing (typing indicator, text extraction,
+    /// LLM call) for a single message, whether it's the initial message or a drained one.
+    async fn process_queued_message(
+        &self,
+        queued: &QueuedMessage,
+        handle: &SessionHandle,
+    ) -> Option<String> {
+        let routing = &queued.data.routing;
+        let content = &queued.data.content;
+        let sender = &queued.data.sender;
+        let gateway = &queued.gateway;
+
+        // Show typing indicator
+        let _ = self
+            .services
+            .gateways
+            .send_typing(gateway, &routing.chat_id)
+            .await;
+
+        let should_prefix = is_group_chat(&routing.chat_type);
+
+        match content {
+            MessageContent::Text { text } => {
+                let text = if should_prefix {
+                    format!("{}: {}", resolve_sender_label(sender), text)
+                } else {
+                    text.clone()
+                };
+                self.process_text_message(gateway, &routing.chat_id, handle, &text, sender, routing)
+                    .await
+            }
+            MessageContent::Media { caption, .. } => {
+                if let Some(caption) = caption
+                    && !caption.is_empty()
+                {
+                    let text = if should_prefix {
+                        format!("{}: {}", resolve_sender_label(sender), caption)
+                    } else {
+                        caption.clone()
+                    };
+                    self.process_text_message(
+                        gateway,
+                        &routing.chat_id,
+                        handle,
+                        &text,
+                        sender,
+                        routing,
+                    )
+                    .await
+                } else {
+                    None
+                }
+            }
+            _ => {
+                debug!(
+                    gateway = %gateway,
+                    content_type = ?content,
+                    "Ignoring non-text message content"
+                );
+                None
+            }
+        }
+    }
+
+    /// Run the drain loop after processing a message.
+    ///
+    /// Keeps draining the queue and processing/sending responses until the queue
+    /// is empty. Responses from drained messages are sent directly via the gateway.
+    async fn drain_loop(&self, handle: &SessionHandle, config: &QueueConfig) {
+        let queue = self.session_queues.get(handle.id());
+
+        loop {
+            let drain_result = queue.drain(config).await;
+
+            match drain_result {
+                DrainResult::Idle => break,
+                DrainResult::Batched(messages) => {
+                    let combined = combine_messages(messages);
+                    if let Some(response) = self.process_queued_message(&combined, handle).await {
+                        let _ = self
+                            .services
+                            .gateways
+                            .send_message(
+                                &combined.gateway,
+                                &combined.data.routing.chat_id,
+                                &response,
+                                None,
+                            )
+                            .await;
+                    }
+                }
+                DrainResult::Sequential(msg) => {
+                    if let Some(response) = self.process_queued_message(&msg, handle).await {
+                        let _ = self
+                            .services
+                            .gateways
+                            .send_message(&msg.gateway, &msg.data.routing.chat_id, &response, None)
+                            .await;
+                    }
+                }
+            }
+        }
+    }
+
     /// Process a text message and return the response.
     async fn process_text_message(
         &self,
@@ -350,10 +490,10 @@ impl GatewayMessageHandler {
             .with_directives(directives);
 
         // Inject context buffer for mention-activated group chats
-        if let Some(config) = self.should_inject_context_buffer(agent, routing) {
-            if let Some(block) = self.build_context_buffer_block(handle, config).await {
-                builder = builder.add_block(block);
-            }
+        if let Some(config) = self.should_inject_context_buffer(agent, routing)
+            && let Some(block) = self.build_context_buffer_block(handle, config).await
+        {
+            builder = builder.add_block(block);
         }
 
         let chat_request = builder.build().render(
@@ -445,10 +585,10 @@ impl GatewayMessageHandler {
             .with_directives(directives);
 
         // Inject context buffer for mention-activated group chats
-        if let Some(config) = self.should_inject_context_buffer(agent, routing) {
-            if let Some(block) = self.build_context_buffer_block(handle, config).await {
-                builder = builder.add_block(block);
-            }
+        if let Some(config) = self.should_inject_context_buffer(agent, routing)
+            && let Some(block) = self.build_context_buffer_block(handle, config).await
+        {
+            builder = builder.add_block(block);
         }
 
         let messages = builder
@@ -642,66 +782,67 @@ impl MessageHandler for GatewayMessageHandler {
             }
         }
 
-        let lock = self.message_locks.get(handle.id());
-        let _guard = lock.lock().await;
+        // Build the queued message
+        let queued = QueuedMessage {
+            gateway: gateway.to_string(),
+            data: data.clone(),
+            enqueued_at: Instant::now(),
+        };
 
-        // Show typing indicator while processing
-        let _ = self
-            .services
-            .gateways
-            .send_typing(gateway, &routing.chat_id)
-            .await;
+        let queue_config = self.resolve_queue_config(&handle, routing);
+        let queue = self.session_queues.get(handle.id());
 
-        // For group messages, prefix content with sender label
-        let should_prefix = is_group_chat(&routing.chat_type);
-
-        // Process based on content type
-        match content {
-            MessageContent::Text { text } => {
-                let text = if should_prefix {
-                    format!("{}: {}", resolve_sender_label(sender), text)
-                } else {
-                    text.clone()
-                };
-                self.process_text_message(
-                    gateway,
-                    &routing.chat_id,
-                    &handle,
-                    &text,
-                    sender,
-                    routing,
-                )
+        // Debounce or direct enqueue based on config
+        let (enqueue_result, start_timer) = if queue_config.debounce.enabled {
+            queue
+                .debounce_or_enqueue(queued.clone(), &queue_config)
                 .await
+        } else {
+            (
+                queue.try_enqueue(queued.clone(), &queue_config).await,
+                false,
+            )
+        };
+
+        // Start debounce timer if this is the first message from this sender
+        if start_timer {
+            let queue_clone = Arc::clone(&queue);
+            let config_clone = queue_config.clone();
+            let sender_id = sender.id.clone();
+
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(
+                    config_clone.debounce.window_ms,
+                ))
+                .await;
+                // Flush debounce buffer into the pending queue.
+                // If the session is idle, flush_debounce sends a wake notification
+                // which will be picked up by the drain loop's wake listener.
+                let _ = queue_clone.flush_debounce(&sender_id, &config_clone).await;
+            });
+        }
+
+        match enqueue_result {
+            EnqueueResult::ProcessNow => {
+                // Process the message directly
+                let response = self.process_queued_message(&queued, &handle).await;
+
+                // Run drain loop for any messages that arrived while processing
+                self.drain_loop(&handle, &queue_config).await;
+
+                response
             }
-            MessageContent::Media { caption, .. } => {
-                if let Some(caption) = caption
-                    && !caption.is_empty()
-                {
-                    let text = if should_prefix {
-                        format!("{}: {}", resolve_sender_label(sender), caption)
-                    } else {
-                        caption.clone()
-                    };
-                    return self
-                        .process_text_message(
-                            gateway,
-                            &routing.chat_id,
-                            &handle,
-                            &text,
-                            sender,
-                            routing,
-                        )
-                        .await;
-                }
+            EnqueueResult::Queued | EnqueueResult::Debounced => {
+                // Message is queued/debounced — response will come later via drain loop
                 None
             }
-            _ => {
-                debug!(
-                    gateway = %gateway,
-                    content_type = ?content,
-                    "Ignoring non-text message content"
-                );
+            EnqueueResult::DroppedNew => {
+                // Silently dropped
                 None
+            }
+            EnqueueResult::Rejected => {
+                // Return reject message if configured
+                queue_config.reject_message.clone()
             }
         }
     }
