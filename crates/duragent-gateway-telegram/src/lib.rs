@@ -86,26 +86,6 @@ impl TelegramGateway {
 
         let bot = Bot::with_client(&self.config.bot_token, client);
 
-        // Send ready event
-        let ready_event = GatewayEvent::Ready {
-            gateway: "telegram".to_string(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            capabilities: vec![
-                capabilities::MEDIA.to_string(),
-                capabilities::EDIT.to_string(),
-                capabilities::DELETE.to_string(),
-                capabilities::TYPING.to_string(),
-                capabilities::REPLY.to_string(),
-                capabilities::INLINE_KEYBOARD.to_string(),
-            ],
-        };
-        if event_tx.send(ready_event).await.is_err() {
-            error!("Failed to send ready event");
-            return;
-        }
-
-        info!("Telegram gateway starting");
-
         // Get bot identity for mention detection
         let bot_user = match bot.get_me().await {
             Ok(me) => {
@@ -124,6 +104,26 @@ impl TelegramGateway {
                 None
             }
         };
+
+        // Send ready event after bot identity check
+        let ready_event = GatewayEvent::Ready {
+            gateway: "telegram".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            capabilities: vec![
+                capabilities::MEDIA.to_string(),
+                capabilities::EDIT.to_string(),
+                capabilities::DELETE.to_string(),
+                capabilities::TYPING.to_string(),
+                capabilities::REPLY.to_string(),
+                capabilities::INLINE_KEYBOARD.to_string(),
+            ],
+        };
+        if event_tx.send(ready_event).await.is_err() {
+            error!("failed to send ready event");
+            return;
+        }
+
+        info!("Telegram gateway started");
 
         // Build dispatcher and get shutdown token for graceful shutdown
         let message_handler = Update::filter_message().endpoint({
