@@ -81,23 +81,14 @@ impl KeyedLocks {
     /// Returns the number of entries removed.
     pub fn cleanup_stale(&self, max_age: Duration) -> usize {
         let now = Instant::now();
-        let stale_keys: Vec<_> = self
-            .locks
-            .iter()
-            .filter(|entry| {
-                let (lock, last_access) = entry.value();
-                // Only remove if no one is waiting (strong_count == 1 means only DashMap holds it)
-                // and it hasn't been accessed recently
-                Arc::strong_count(lock) == 1 && now.duration_since(*last_access) > max_age
-            })
-            .map(|entry| entry.key().clone())
-            .collect();
-
-        let count = stale_keys.len();
-        for key in stale_keys {
-            self.locks.remove(&key);
-        }
-        count
+        let before = self.locks.len();
+        // retain holds the bucket lock while evaluating the predicate, so there
+        // is no race between checking strong_count and removing the entry.
+        self.locks.retain(|_key, (lock, last_access)| {
+            // Keep entries that are either recently accessed or still referenced.
+            Arc::strong_count(lock) > 1 || now.duration_since(*last_access) <= max_age
+        });
+        before - self.locks.len()
     }
 
     /// Spawn a background task that periodically cleans up stale entries.
