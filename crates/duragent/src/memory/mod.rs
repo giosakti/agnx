@@ -171,13 +171,17 @@ impl Memory {
 
     /// Rewrite agent's MEMORY.md.
     pub fn write_memory(&self, content: &str) -> Result<PathBuf> {
+        use std::io::Write;
+
         std::fs::create_dir_all(&self.agent_memory_dir)?;
 
         let path = self.agent_memory_dir.join("MEMORY.md");
         let temp = self.agent_memory_dir.join("MEMORY.md.tmp");
 
-        // Atomic write
-        std::fs::write(&temp, content)?;
+        // Atomic write: write → fsync → rename
+        let mut file = std::fs::File::create(&temp)?;
+        file.write_all(content.as_bytes())?;
+        file.sync_all()?;
         std::fs::rename(&temp, &path)?;
 
         Ok(path)
@@ -185,6 +189,8 @@ impl Memory {
 
     /// Write world knowledge for a topic (replaces existing content).
     pub fn write_world(&self, topic: &str, content: &str) -> Result<PathBuf> {
+        use std::io::Write;
+
         std::fs::create_dir_all(&self.world_dir)?;
 
         // Sanitize topic name (only alphanumeric, dash, underscore)
@@ -202,9 +208,11 @@ impl Memory {
         let filename = format!("{}.md", safe_topic);
         let path = self.world_dir.join(&filename);
 
-        // Atomic write
+        // Atomic write: write → fsync → rename
         let temp = self.world_dir.join(format!("{}.md.tmp", safe_topic));
-        std::fs::write(&temp, content)?;
+        let mut file = std::fs::File::create(&temp)?;
+        file.write_all(content.as_bytes())?;
+        file.sync_all()?;
         std::fs::rename(&temp, &path)?;
 
         Ok(path)
