@@ -99,6 +99,14 @@ pub struct SessionConfig {
     /// Pending approval waiting for user decision.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_approval: Option<PendingApproval>,
+
+    /// Maximum entries in the ephemeral silent message buffer.
+    #[serde(default)]
+    pub silent_buffer_cap: Option<usize>,
+
+    /// Maximum total messages before trimming oldest.
+    #[serde(default)]
+    pub actor_message_limit: Option<usize>,
 }
 
 impl SessionSnapshot {

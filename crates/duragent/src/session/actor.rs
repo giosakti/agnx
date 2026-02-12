@@ -763,6 +763,8 @@ impl SessionActor {
                 gateway: self.gateway.clone(),
                 gateway_chat_id: self.gateway_chat_id.clone(),
                 pending_approval: self.pending_approval.clone(),
+                silent_buffer_cap: Some(self.silent_buffer_cap),
+                actor_message_limit: Some(self.actor_message_limit),
             },
         );
 
