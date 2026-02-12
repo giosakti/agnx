@@ -39,6 +39,36 @@
 //! - [`GatewayEvent`]: Messages from gateway to Duragent (message received, errors, etc.)
 //!
 //! For external gateways, these are serialized as JSON Lines (newline-delimited JSON).
+//!
+//! # Message Flow
+//!
+//! When a message arrives from a platform, it flows through these stages:
+//!
+//! ```text
+//!  Gateway (Telegram/Discord/...)
+//!       │  GatewayEvent::MessageReceived
+//!       ▼
+//!  GatewayMessageHandler::handle_message()          [handler.rs]
+//!       │  1. Resolve agent via routing rules        [routing.rs]
+//!       │  2. Get or create session                  [routing.rs]
+//!       │  3. Resolve queue config (DM vs group)
+//!       ▼
+//!  SessionMessageQueue::debounce_or_enqueue()       [queue.rs]
+//!       │
+//!       ├─ Session idle → ProcessNow
+//!       │     └─ process_message() immediately
+//!       │
+//!       └─ Session busy → Debounced
+//!             └─ Timer fires → flush_debounce()
+//!                   └─ Combined message enqueued
+//!                         └─ wake notification
+//!
+//!  After processing completes:
+//!  SessionMessageQueue::drain()                     [queue.rs]
+//!       ├─ Batch mode  → all pending as one message
+//!       ├─ Sequential  → next single message
+//!       └─ Drop mode   → discard, go idle
+//! ```
 
 mod approval;
 mod commands;
