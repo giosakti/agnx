@@ -57,12 +57,16 @@ impl ScheduleStore for FileScheduleStore {
             .await
             .map_err(|e| StorageError::file_io(&self.schedules_dir, e))?
         {
-            let path = entry.path();
-
             // Skip directories and non-YAML files
-            if path.is_dir() {
+            let file_type = entry
+                .file_type()
+                .await
+                .map_err(|e| StorageError::file_io(&self.schedules_dir, e))?;
+            if file_type.is_dir() {
                 continue;
             }
+
+            let path = entry.path();
             if path.extension().is_none_or(|ext| ext != "yaml") {
                 continue;
             }
@@ -106,12 +110,11 @@ impl ScheduleStore for FileScheduleStore {
         self.ensure_dir().await?;
 
         let path = self.schedule_path(&schedule.id);
-        let temp_path = path.with_extension("yaml.tmp");
 
         let content = serde_saphyr::to_string(schedule)
             .map_err(|e| StorageError::serialization(e.to_string()))?;
 
-        super::atomic_write_file(&temp_path, &path, content.as_bytes()).await
+        super::atomic_write_file(&path, content.as_bytes()).await
     }
 
     async fn delete(&self, id: &str) -> StorageResult<()> {

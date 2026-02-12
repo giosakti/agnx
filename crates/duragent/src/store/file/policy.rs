@@ -68,14 +68,12 @@ impl PolicyStore for FilePolicyStore {
     }
 
     async fn save(&self, agent_name: &str, policy: &ToolPolicy) -> StorageResult<()> {
-        let agent_dir = self.agents_dir.join(agent_name);
         let path = self.local_path(agent_name);
-        let tmp_path = agent_dir.join("policy.local.yaml.tmp");
 
         let content = serde_saphyr::to_string(policy)
             .map_err(|e| StorageError::serialization(e.to_string()))?;
 
-        super::atomic_write_file(&tmp_path, &path, content.as_bytes()).await?;
+        super::atomic_write_file(&path, content.as_bytes()).await?;
 
         tracing::debug!(path = %path.display(), "saved local policy");
         Ok(())

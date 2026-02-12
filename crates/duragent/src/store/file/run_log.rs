@@ -8,7 +8,6 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::fs::{self, OpenOptions};
 use tokio::io::AsyncWriteExt;
-use tokio::sync::Mutex;
 
 use crate::scheduler::RunLogEntry;
 use crate::store::error::{StorageError, StorageResult};
@@ -29,7 +28,7 @@ const ENTRIES_TO_KEEP: usize = 1000;
 pub struct FileRunLogStore {
     runs_dir: PathBuf,
     /// Per-schedule locks to serialize operations.
-    locks: Arc<Mutex<KeyedLocks>>,
+    locks: Arc<KeyedLocks>,
 }
 
 impl FileRunLogStore {
@@ -37,7 +36,7 @@ impl FileRunLogStore {
     pub fn new(runs_dir: impl Into<PathBuf>) -> Self {
         Self {
             runs_dir: runs_dir.into(),
-            locks: Arc::new(Mutex::new(KeyedLocks::new())),
+            locks: Arc::new(KeyedLocks::new()),
         }
     }
 
@@ -71,8 +70,7 @@ impl FileRunLogStore {
         let new_content = kept.join("\n") + "\n";
 
         // Write atomically via temp file with fsync
-        let temp_path = path.with_extension("jsonl.tmp");
-        super::atomic_write_file(&temp_path, path, new_content.as_bytes()).await?;
+        super::atomic_write_file(path, new_content.as_bytes()).await?;
 
         tracing::debug!(
             path = %path.display(),
@@ -92,10 +90,8 @@ impl RunLogStore for FileRunLogStore {
         schedule_id: &str,
         limit: usize,
     ) -> StorageResult<Vec<RunLogEntry>> {
-        let locks = self.locks.lock().await;
-        let lock = locks.get(schedule_id);
+        let lock = self.locks.get(schedule_id);
         let _guard = lock.lock().await;
-        drop(locks);
 
         let path = self.log_path(schedule_id);
 
@@ -116,10 +112,8 @@ impl RunLogStore for FileRunLogStore {
     }
 
     async fn append(&self, schedule_id: &str, entry: &RunLogEntry) -> StorageResult<()> {
-        let locks = self.locks.lock().await;
-        let lock = locks.get(schedule_id);
+        let lock = self.locks.get(schedule_id);
         let _guard = lock.lock().await;
-        drop(locks);
 
         self.ensure_dir().await?;
 
@@ -149,7 +143,7 @@ impl RunLogStore for FileRunLogStore {
             .await
             .map_err(|e| StorageError::file_io(&path, e))?;
 
-        file.flush()
+        file.sync_all()
             .await
             .map_err(|e| StorageError::file_io(&path, e))?;
 
@@ -157,10 +151,8 @@ impl RunLogStore for FileRunLogStore {
     }
 
     async fn delete(&self, schedule_id: &str) -> StorageResult<()> {
-        let locks = self.locks.lock().await;
-        let lock = locks.get(schedule_id);
+        let lock = self.locks.get(schedule_id);
         let _guard = lock.lock().await;
-        drop(locks);
 
         let path = self.log_path(schedule_id);
 
