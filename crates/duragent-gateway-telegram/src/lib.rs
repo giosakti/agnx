@@ -39,6 +39,16 @@ impl TelegramConfig {
 }
 
 // ============================================================================
+// Bot Identity
+// ============================================================================
+
+/// Bot identity for mention detection.
+struct BotIdentity {
+    user_id: u64,
+    username: String,
+}
+
+// ============================================================================
 // Telegram Gateway
 // ============================================================================
 
@@ -63,7 +73,7 @@ impl TelegramGateway {
     pub async fn start(
         self,
         event_tx: mpsc::Sender<GatewayEvent>,
-        mut command_rx: mpsc::Receiver<GatewayCommand>,
+        command_rx: mpsc::Receiver<GatewayCommand>,
     ) {
         // Configure HTTP client with timeout longer than polling timeout
         let client = match teloxide::net::default_reqwest_settings()
@@ -162,174 +172,14 @@ impl TelegramGateway {
         let mut dispatcher = Dispatcher::builder(bot.clone(), handler).build();
         let shutdown_token = dispatcher.shutdown_token();
 
-        // Clone for command handler
-        let bot_for_commands = bot.clone();
-        let event_tx_for_commands = event_tx.clone();
-        let started_at = self.started_at;
-
         // Spawn command handler
-        let command_handle = tokio::spawn(async move {
-            while let Some(command) = command_rx.recv().await {
-                match command {
-                    GatewayCommand::SendMessage {
-                        request_id,
-                        chat_id,
-                        content,
-                        reply_to,
-                        inline_keyboard,
-                    } => {
-                        let result = send_message(
-                            &bot_for_commands,
-                            &chat_id,
-                            &content,
-                            reply_to.as_deref(),
-                            inline_keyboard.as_ref(),
-                        )
-                        .await;
-
-                        let event = match result {
-                            Ok(msg_id) => GatewayEvent::CommandOk {
-                                request_id,
-                                message_id: Some(msg_id),
-                            },
-                            Err(e) => GatewayEvent::CommandError {
-                                request_id,
-                                code: "send_failed".to_string(),
-                                message: e,
-                            },
-                        };
-
-                        if event_tx_for_commands.send(event).await.is_err() {
-                            break;
-                        }
-                    }
-
-                    GatewayCommand::SendTyping { chat_id, .. } => {
-                        let chat_id: i64 = match chat_id.parse() {
-                            Ok(id) => id,
-                            Err(_) => continue,
-                        };
-                        let _ = bot_for_commands
-                            .send_chat_action(ChatId(chat_id), teloxide::types::ChatAction::Typing)
-                            .await;
-                    }
-
-                    GatewayCommand::EditMessage {
-                        request_id,
-                        chat_id,
-                        message_id,
-                        content,
-                    } => {
-                        let result =
-                            edit_message(&bot_for_commands, &chat_id, &message_id, &content).await;
-
-                        let event = match result {
-                            Ok(_) => GatewayEvent::CommandOk {
-                                request_id,
-                                message_id: Some(message_id),
-                            },
-                            Err(e) => GatewayEvent::CommandError {
-                                request_id,
-                                code: "edit_failed".to_string(),
-                                message: e,
-                            },
-                        };
-
-                        if event_tx_for_commands.send(event).await.is_err() {
-                            break;
-                        }
-                    }
-
-                    GatewayCommand::DeleteMessage {
-                        request_id,
-                        chat_id,
-                        message_id,
-                    } => {
-                        let result = delete_message(&bot_for_commands, &chat_id, &message_id).await;
-
-                        let event = match result {
-                            Ok(_) => GatewayEvent::CommandOk {
-                                request_id,
-                                message_id: None,
-                            },
-                            Err(e) => GatewayEvent::CommandError {
-                                request_id,
-                                code: "delete_failed".to_string(),
-                                message: e,
-                            },
-                        };
-
-                        if event_tx_for_commands.send(event).await.is_err() {
-                            break;
-                        }
-                    }
-
-                    GatewayCommand::Ping { request_id } => {
-                        let event = GatewayEvent::Pong {
-                            request_id,
-                            uptime_seconds: started_at.elapsed().as_secs(),
-                            connected: true,
-                        };
-                        if event_tx_for_commands.send(event).await.is_err() {
-                            break;
-                        }
-                    }
-
-                    GatewayCommand::AnswerCallbackQuery {
-                        request_id,
-                        callback_query_id,
-                        text,
-                    } => {
-                        let result =
-                            answer_callback_query(&bot_for_commands, &callback_query_id, text)
-                                .await;
-
-                        let event = match result {
-                            Ok(_) => GatewayEvent::CommandOk {
-                                request_id,
-                                message_id: None,
-                            },
-                            Err(e) => GatewayEvent::CommandError {
-                                request_id,
-                                code: "answer_callback_failed".to_string(),
-                                message: e,
-                            },
-                        };
-
-                        if event_tx_for_commands.send(event).await.is_err() {
-                            break;
-                        }
-                    }
-
-                    GatewayCommand::Shutdown => {
-                        info!("Telegram gateway received shutdown command");
-                        // Trigger graceful shutdown of the dispatcher
-                        if let Err(e) = shutdown_token.shutdown() {
-                            warn!(error = ?e, "Dispatcher already shut down");
-                        }
-                        let _ = event_tx_for_commands
-                            .send(GatewayEvent::Shutdown {
-                                reason: "shutdown requested".to_string(),
-                            })
-                            .await;
-                        break;
-                    }
-
-                    GatewayCommand::SendMedia { request_id, .. } => {
-                        // TODO: Implement media sending
-                        let event = GatewayEvent::CommandError {
-                            request_id,
-                            code: "not_implemented".to_string(),
-                            message: "Media sending not yet implemented".to_string(),
-                        };
-                        if event_tx_for_commands.send(event).await.is_err() {
-                            break;
-                        }
-                    }
-                }
-            }
-            debug!("Command handler stopped");
-        });
+        let command_handle = tokio::spawn(dispatch_commands(
+            bot.clone(),
+            command_rx,
+            event_tx.clone(),
+            shutdown_token,
+            self.started_at,
+        ));
 
         // Configure long polling with appropriate timeout
         let polling = teloxide::update_listeners::Polling::builder(bot)
@@ -353,13 +203,173 @@ impl TelegramGateway {
 }
 
 // ============================================================================
-// Bot Identity
+// Command Dispatch
 // ============================================================================
 
-/// Bot identity for mention detection.
-struct BotIdentity {
-    user_id: u64,
-    username: String,
+/// Receive commands from the core and dispatch them to the Telegram Bot API.
+async fn dispatch_commands(
+    bot: Bot,
+    mut command_rx: mpsc::Receiver<GatewayCommand>,
+    event_tx: mpsc::Sender<GatewayEvent>,
+    shutdown_token: teloxide::dispatching::ShutdownToken,
+    started_at: Instant,
+) {
+    while let Some(command) = command_rx.recv().await {
+        match command {
+            GatewayCommand::SendMessage {
+                request_id,
+                chat_id,
+                content,
+                reply_to,
+                inline_keyboard,
+            } => {
+                let result = send_message(
+                    &bot,
+                    &chat_id,
+                    &content,
+                    reply_to.as_deref(),
+                    inline_keyboard.as_ref(),
+                )
+                .await;
+
+                let event = match result {
+                    Ok(msg_id) => GatewayEvent::CommandOk {
+                        request_id,
+                        message_id: Some(msg_id),
+                    },
+                    Err(e) => GatewayEvent::CommandError {
+                        request_id,
+                        code: "send_failed".to_string(),
+                        message: e,
+                    },
+                };
+
+                if event_tx.send(event).await.is_err() {
+                    break;
+                }
+            }
+
+            GatewayCommand::SendTyping { chat_id, .. } => {
+                let chat_id: i64 = match chat_id.parse() {
+                    Ok(id) => id,
+                    Err(_) => continue,
+                };
+                let _ = bot
+                    .send_chat_action(ChatId(chat_id), teloxide::types::ChatAction::Typing)
+                    .await;
+            }
+
+            GatewayCommand::EditMessage {
+                request_id,
+                chat_id,
+                message_id,
+                content,
+            } => {
+                let result = edit_message(&bot, &chat_id, &message_id, &content).await;
+
+                let event = match result {
+                    Ok(_) => GatewayEvent::CommandOk {
+                        request_id,
+                        message_id: Some(message_id),
+                    },
+                    Err(e) => GatewayEvent::CommandError {
+                        request_id,
+                        code: "edit_failed".to_string(),
+                        message: e,
+                    },
+                };
+
+                if event_tx.send(event).await.is_err() {
+                    break;
+                }
+            }
+
+            GatewayCommand::DeleteMessage {
+                request_id,
+                chat_id,
+                message_id,
+            } => {
+                let result = delete_message(&bot, &chat_id, &message_id).await;
+
+                let event = match result {
+                    Ok(_) => GatewayEvent::CommandOk {
+                        request_id,
+                        message_id: None,
+                    },
+                    Err(e) => GatewayEvent::CommandError {
+                        request_id,
+                        code: "delete_failed".to_string(),
+                        message: e,
+                    },
+                };
+
+                if event_tx.send(event).await.is_err() {
+                    break;
+                }
+            }
+
+            GatewayCommand::Ping { request_id } => {
+                let event = GatewayEvent::Pong {
+                    request_id,
+                    uptime_seconds: started_at.elapsed().as_secs(),
+                    connected: true,
+                };
+                if event_tx.send(event).await.is_err() {
+                    break;
+                }
+            }
+
+            GatewayCommand::AnswerCallbackQuery {
+                request_id,
+                callback_query_id,
+                text,
+            } => {
+                let result = answer_callback_query(&bot, &callback_query_id, text).await;
+
+                let event = match result {
+                    Ok(_) => GatewayEvent::CommandOk {
+                        request_id,
+                        message_id: None,
+                    },
+                    Err(e) => GatewayEvent::CommandError {
+                        request_id,
+                        code: "answer_callback_failed".to_string(),
+                        message: e,
+                    },
+                };
+
+                if event_tx.send(event).await.is_err() {
+                    break;
+                }
+            }
+
+            GatewayCommand::Shutdown => {
+                info!("Telegram gateway received shutdown command");
+                if let Err(e) = shutdown_token.shutdown() {
+                    warn!(error = ?e, "Dispatcher already shut down");
+                }
+                let _ = event_tx
+                    .send(GatewayEvent::Shutdown {
+                        reason: "shutdown requested".to_string(),
+                    })
+                    .await;
+                break;
+            }
+
+            GatewayCommand::SendMedia { request_id, .. } => {
+                // TODO: Implement media sending
+                let event = GatewayEvent::CommandError {
+                    request_id,
+                    code: "not_implemented".to_string(),
+                    message: "Media sending not yet implemented".to_string(),
+                };
+                if event_tx.send(event).await.is_err() {
+                    break;
+                }
+            }
+        }
+    }
+    debug!("Command handler stopped");
 }
 
 // ============================================================================
@@ -582,8 +592,11 @@ fn extract_routing(msg: &Message) -> RoutingContext {
 }
 
 // ============================================================================
-// Command Execution
+// Telegram API Helpers
 // ============================================================================
+
+/// Maximum message length for Telegram messages.
+const MAX_MESSAGE_LENGTH: usize = 4096;
 
 async fn send_message(
     bot: &Bot,
@@ -594,24 +607,71 @@ async fn send_message(
 ) -> Result<String, String> {
     let chat_id: i64 = chat_id.parse().map_err(|_| "invalid chat_id".to_string())?;
 
-    let mut request = bot.send_message(ChatId(chat_id), content);
+    let chunks = chunk_message(content);
+    let last_idx = chunks.len() - 1;
+    let mut last_msg_id = String::new();
 
-    if let Some(reply_to) = reply_to
-        && let Ok(msg_id) = reply_to.parse::<i32>()
-    {
-        request = request.reply_parameters(teloxide::types::ReplyParameters::new(
-            teloxide::types::MessageId(msg_id),
-        ));
+    // Parse reply_to message ID once
+    let reply_to_id = reply_to.and_then(|id| id.parse::<i32>().ok());
+
+    for (i, chunk) in chunks.iter().enumerate() {
+        let mut request = bot.send_message(ChatId(chat_id), *chunk);
+
+        // Reply only on the first chunk
+        if i == 0
+            && let Some(msg_id) = reply_to_id
+        {
+            request = request.reply_parameters(teloxide::types::ReplyParameters::new(
+                teloxide::types::MessageId(msg_id),
+            ));
+        }
+
+        // Attach inline keyboard only to the last chunk
+        if i == last_idx
+            && let Some(keyboard) = inline_keyboard
+        {
+            let tg_keyboard = convert_inline_keyboard(keyboard);
+            request = request.reply_markup(tg_keyboard);
+        }
+
+        let msg = request.await.map_err(|e| e.to_string())?;
+        last_msg_id = msg.id.0.to_string();
     }
 
-    // Add inline keyboard if provided
-    if let Some(keyboard) = inline_keyboard {
-        let tg_keyboard = convert_inline_keyboard(keyboard);
-        request = request.reply_markup(tg_keyboard);
+    Ok(last_msg_id)
+}
+
+/// Split a message into chunks that fit within Telegram's message limit.
+///
+/// Tries to split at newline boundaries for cleaner output.
+fn chunk_message(content: &str) -> Vec<&str> {
+    if content.len() <= MAX_MESSAGE_LENGTH {
+        return vec![content];
     }
 
-    let msg = request.await.map_err(|e| e.to_string())?;
-    Ok(msg.id.0.to_string())
+    let mut chunks = Vec::new();
+    let mut remaining = content;
+
+    while !remaining.is_empty() {
+        if remaining.len() <= MAX_MESSAGE_LENGTH {
+            chunks.push(remaining);
+            break;
+        }
+
+        // Find a safe split point at a char boundary
+        let boundary = remaining.floor_char_boundary(MAX_MESSAGE_LENGTH);
+        let split_at = remaining[..boundary].rfind('\n').unwrap_or(boundary);
+
+        let split_at = split_at.max(1);
+        let (chunk, rest) = remaining.split_at(split_at);
+        if !chunk.is_empty() {
+            chunks.push(chunk);
+        }
+        // Skip the newline if we split at one
+        remaining = rest.strip_prefix('\n').unwrap_or(rest);
+    }
+
+    chunks
 }
 
 /// Convert protocol InlineKeyboard to teloxide InlineKeyboardMarkup.
