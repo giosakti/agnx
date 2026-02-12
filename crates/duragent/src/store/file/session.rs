@@ -84,10 +84,16 @@ impl SessionStore for FileSessionStore {
             .await
             .map_err(|e| StorageError::file_io(&self.sessions_dir, e))?
         {
-            let path = entry.path();
-            if path.is_dir() {
+            let file_type = entry
+                .file_type()
+                .await
+                .map_err(|e| StorageError::file_io(&self.sessions_dir, e))?;
+            if file_type.is_dir() {
+                let path = entry.path();
                 // Check if it has a state.yaml (valid session)
-                if path.join("state.yaml").exists()
+                if tokio::fs::try_exists(path.join("state.yaml"))
+                    .await
+                    .unwrap_or(false)
                     && let Some(name) = path.file_name()
                 {
                     sessions.push(name.to_string_lossy().to_string());
@@ -223,12 +229,11 @@ impl SessionStore for FileSessionStore {
         self.ensure_session_dir(session_id).await?;
 
         let final_path = self.snapshot_path(session_id);
-        let temp_path = self.session_dir(session_id).join("state.yaml.tmp");
 
         let yaml = serde_saphyr::to_string(snapshot)
             .map_err(|e| StorageError::serialization(e.to_string()))?;
 
-        super::atomic_write_file(&temp_path, &final_path, yaml.as_bytes()).await
+        super::atomic_write_file(&final_path, yaml.as_bytes()).await
     }
 
     // ========================================================================
@@ -272,7 +277,16 @@ impl SessionStore for FileSessionStore {
             return Ok(());
         }
 
-        // Archive old events if requested
+        // Write retained lines first (crash-safe: events.jsonl is always correct)
+        let mut retained_buf = String::new();
+        for line in &retained_lines {
+            retained_buf.push_str(line);
+            retained_buf.push('\n');
+        }
+
+        super::atomic_write_file(&path, retained_buf.as_bytes()).await?;
+
+        // Archive old events if requested (best-effort; may be lost on crash)
         if archive {
             let archive_path = self.session_dir(session_id).join("events.archive.jsonl");
             let mut archive_buf = String::new();
@@ -295,15 +309,7 @@ impl SessionStore for FileSessionStore {
                 .map_err(|e| StorageError::file_io(&archive_path, e))?;
         }
 
-        // Write retained lines to temp file, then atomic rename
-        let temp_path = self.session_dir(session_id).join("events.jsonl.tmp");
-        let mut retained_buf = String::new();
-        for line in &retained_lines {
-            retained_buf.push_str(line);
-            retained_buf.push('\n');
-        }
-
-        super::atomic_write_file(&temp_path, &path, retained_buf.as_bytes()).await
+        Ok(())
     }
 }
 

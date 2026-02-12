@@ -26,21 +26,26 @@ pub use schedule::FileScheduleStore;
 pub use session::FileSessionStore;
 
 /// Write data to a temp file, fsync it, then atomically rename to the final path.
-pub(super) async fn atomic_write_file(
-    temp_path: &Path,
-    final_path: &Path,
-    data: &[u8],
-) -> StorageResult<()> {
-    let mut file = fs::File::create(temp_path)
+///
+/// The temp file name is generated internally using a ULID to avoid collisions
+/// from concurrent writers targeting the same final path.
+pub(super) async fn atomic_write_file(final_path: &Path, data: &[u8]) -> StorageResult<()> {
+    let file_name = final_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file");
+    let temp_path = final_path.with_file_name(format!("{}.{}.tmp", file_name, ulid::Ulid::new()));
+
+    let mut file = fs::File::create(&temp_path)
         .await
-        .map_err(|e| StorageError::file_io(temp_path, e))?;
+        .map_err(|e| StorageError::file_io(&temp_path, e))?;
     file.write_all(data)
         .await
-        .map_err(|e| StorageError::file_io(temp_path, e))?;
+        .map_err(|e| StorageError::file_io(&temp_path, e))?;
     file.sync_all()
         .await
-        .map_err(|e| StorageError::file_io(temp_path, e))?;
-    fs::rename(temp_path, final_path)
+        .map_err(|e| StorageError::file_io(&temp_path, e))?;
+    fs::rename(&temp_path, final_path)
         .await
         .map_err(|e| StorageError::file_io(final_path, e))?;
     Ok(())
