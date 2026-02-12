@@ -18,7 +18,7 @@ use tracing::{debug, warn};
 
 use crate::agent::{AgentSpec, ContextConfig};
 use crate::context::{drop_oldest_iterations, mask_tool_results, truncate_tool_result};
-use crate::llm::{ChatRequest, LLMProvider, Message, Role, StreamEvent, ToolCall, Usage};
+use crate::llm::{ChatRequest, LLMError, LLMProvider, Message, Role, StreamEvent, ToolCall, Usage};
 use crate::session::handle::SessionHandle;
 use crate::session::snapshot::PendingApproval;
 use crate::tools::{ToolError, ToolExecutor, ToolResult};
@@ -153,8 +153,23 @@ pub async fn run_agentic_loop(
             tool_definitions.clone(),
         );
 
-        // Call LLM with streaming
-        let mut stream = provider.chat_stream(request).await?;
+        // Call LLM with streaming (retry on rate limit)
+        let mut stream = {
+            const MAX_RETRIES: u32 = 3;
+            let mut attempt = 0;
+            loop {
+                match provider.chat_stream(request.clone()).await {
+                    Ok(s) => break s,
+                    Err(LLMError::RateLimit { retry_after }) if attempt < MAX_RETRIES => {
+                        attempt += 1;
+                        let delay = retry_after.unwrap_or(2u64.pow(attempt));
+                        warn!(attempt, delay_secs = delay, "Rate limited, retrying");
+                        tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            }
+        };
 
         let mut content = String::new();
         let mut tool_calls: Vec<ToolCall> = Vec::new();
@@ -299,8 +314,19 @@ async fn execute_tool_call(
     context_config: &ContextConfig,
 ) -> ToolCallOutcome {
     // Parse arguments
-    let arguments: serde_json::Value =
-        serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
+    let arguments: serde_json::Value = match serde_json::from_str(&tool_call.function.arguments) {
+        Ok(v) => v,
+        Err(e) => {
+            let truncated: String = tool_call.function.arguments.chars().take(200).collect();
+            warn!(
+                tool = %tool_call.function.name,
+                error = %e,
+                raw = %truncated,
+                "Malformed tool call arguments, using empty object"
+            );
+            serde_json::Value::default()
+        }
+    };
 
     // Record tool call event
     if let Err(e) = handle

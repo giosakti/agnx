@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use futures::Stream;
 use reqwest::Client;
 
-use super::error::LLMError;
+use super::error::{LLMError, check_response_error};
 use super::provider::LLMProvider;
 use super::types::{
     ChatRequest, ChatResponse, ChatStream, FunctionCall, Message, StreamEvent, ToolCall,
@@ -51,6 +51,9 @@ impl LLMProvider for OpenAICompatibleProvider {
 
         let response = req.json(&request).send().await?;
 
+        if let Some(err) = check_response_error(&response) {
+            return Err(err);
+        }
         if !response.status().is_success() {
             let status = response.status().as_u16();
             let message = response.text().await.unwrap_or_default();
@@ -86,6 +89,9 @@ impl LLMProvider for OpenAICompatibleProvider {
 
         let response = req.json(&stream_request).send().await?;
 
+        if let Some(err) = check_response_error(&response) {
+            return Err(err);
+        }
         if !response.status().is_success() {
             let status = response.status().as_u16();
             let message = response.text().await.unwrap_or_default();

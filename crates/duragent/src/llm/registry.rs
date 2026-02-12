@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use reqwest::Client;
-use tokio::sync::RwLock;
+use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
 use super::anthropic::{AnthropicAuth, AnthropicProvider};
@@ -37,7 +37,7 @@ pub mod defaults {
 pub struct ProviderRegistry {
     api_keys: HashMap<Provider, String>,
     client: Client,
-    auth_storage: Arc<RwLock<AuthStorage>>,
+    auth_storage: Arc<Mutex<AuthStorage>>,
 }
 
 impl Default for ProviderRegistry {
@@ -51,7 +51,7 @@ impl Default for ProviderRegistry {
         Self {
             api_keys: HashMap::new(),
             client,
-            auth_storage: Arc::new(RwLock::new(AuthStorage::default())),
+            auth_storage: Arc::new(Mutex::new(AuthStorage::default())),
         }
     }
 }
@@ -95,7 +95,7 @@ impl ProviderRegistry {
                         debug!("Anthropic API key also found; OAuth takes precedence");
                     }
                 }
-                registry.auth_storage = Arc::new(RwLock::new(storage));
+                registry.auth_storage = Arc::new(Mutex::new(storage));
             }
             Err(e) => {
                 debug!(error = %e, "Failed to load auth credentials");
@@ -123,9 +123,9 @@ impl ProviderRegistry {
 
     /// Check if OAuth credentials are available for any provider.
     fn has_oauth_credentials(&self) -> bool {
-        // Use try_read to avoid blocking — false if locked
+        // Use try_lock to avoid blocking — false if locked
         self.auth_storage
-            .try_read()
+            .try_lock()
             .is_ok_and(|s| s.get_anthropic().is_some())
     }
 
@@ -198,8 +198,11 @@ impl ProviderRegistry {
     }
 
     /// Get OAuth auth for Anthropic, refreshing the token if expired.
+    ///
+    /// Uses a Mutex to ensure only one caller performs the refresh at a time,
+    /// preventing concurrent callers from racing to refresh the same token.
     async fn get_anthropic_oauth_auth(&self) -> Option<AnthropicAuth> {
-        let storage = self.auth_storage.read().await;
+        let mut storage = self.auth_storage.lock().await;
         let credential = storage.get_anthropic()?;
 
         match credential {
@@ -214,14 +217,13 @@ impl ProviderRegistry {
                     return Some(AnthropicAuth::OAuth(access.clone()));
                 }
 
-                // Token expired — need to refresh
+                // Token expired — refresh while holding the lock so concurrent
+                // callers wait and see the updated token instead of all refreshing.
                 let refresh_token = refresh.clone();
-                drop(storage);
 
                 debug!("Anthropic OAuth token expired, refreshing");
                 match anthropic_oauth::refresh_token(&self.client, &refresh_token).await {
                     Ok(tokens) => {
-                        let mut storage = self.auth_storage.write().await;
                         storage.set_anthropic(AuthCredential::OAuth {
                             access: tokens.access_token.clone(),
                             refresh: tokens.refresh_token,
