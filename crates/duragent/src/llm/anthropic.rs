@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use futures::Stream;
 use reqwest::Client;
 
-use super::error::LLMError;
+use super::error::{LLMError, check_response_error};
 use super::provider::LLMProvider;
 use super::types::{
     ChatRequest, ChatResponse, ChatStream, Choice, FunctionCall, Message, Role, StreamEvent,
@@ -98,6 +98,9 @@ impl LLMProvider for AnthropicProvider {
 
         let response = self.build_request(&url, &anthropic_request).send().await?;
 
+        if let Some(err) = check_response_error(&response) {
+            return Err(err);
+        }
         if !response.status().is_success() {
             let status = response.status().as_u16();
             let message = response.text().await.unwrap_or_default();
@@ -114,6 +117,9 @@ impl LLMProvider for AnthropicProvider {
 
         let response = self.build_request(&url, &anthropic_request).send().await?;
 
+        if let Some(err) = check_response_error(&response) {
+            return Err(err);
+        }
         if !response.status().is_success() {
             let status = response.status().as_u16();
             let message = response.text().await.unwrap_or_default();
@@ -429,6 +435,8 @@ struct AnthropicStreamAdapter<S> {
     inner: SseEventStream<S>,
     done: bool,
     usage: Option<Usage>,
+    /// Input tokens from message_start event.
+    input_tokens: u32,
     /// Accumulated tool calls from streaming.
     tool_calls: Vec<ToolCallAccumulator>,
     /// Current tool call index being accumulated.
@@ -449,6 +457,7 @@ impl<S> AnthropicStreamAdapter<S> {
             inner,
             done: false,
             usage: None,
+            input_tokens: 0,
             tool_calls: Vec::new(),
             current_tool_index: None,
         }
@@ -492,6 +501,14 @@ where
                     // Parse Anthropic event JSON
                     match serde_json::from_str::<AnthropicStreamEvent>(&event.data) {
                         Ok(parsed) => match parsed {
+                            AnthropicStreamEvent::MessageStart { message: Some(msg) } => {
+                                if let Some(tokens) =
+                                    msg.pointer("/usage/input_tokens").and_then(|v| v.as_u64())
+                                {
+                                    self.input_tokens = tokens as u32;
+                                }
+                            }
+                            AnthropicStreamEvent::MessageStart { .. } => {}
                             AnthropicStreamEvent::ContentBlockStart {
                                 index,
                                 content_block: Some(block),
@@ -533,9 +550,9 @@ where
                                 ..
                             } => {
                                 self.usage = Some(Usage {
-                                    prompt_tokens: 0,
+                                    prompt_tokens: self.input_tokens,
                                     completion_tokens: u.output_tokens,
-                                    total_tokens: u.output_tokens,
+                                    total_tokens: self.input_tokens + u.output_tokens,
                                 });
                                 // Check if we're ending due to tool use
                                 if stop_reason.as_deref() == Some("tool_use")
