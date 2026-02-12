@@ -138,6 +138,10 @@ fn default_keep_alive_interval() -> u64 {
     15
 }
 
+fn default_max_connections() -> usize {
+    1024
+}
+
 /// Serde default for bool fields that should be `true` (serde's default is `false`).
 fn default_true() -> bool {
     true
@@ -290,6 +294,8 @@ pub struct ServerConfig {
     /// If not set, API endpoints only accept requests from localhost.
     #[serde(default)]
     pub api_token: Option<String>,
+    #[serde(default = "default_max_connections")]
+    pub max_connections: usize,
 }
 
 impl Default for ServerConfig {
@@ -302,6 +308,7 @@ impl Default for ServerConfig {
             keep_alive_interval_seconds: default_keep_alive_interval(),
             admin_token: None,
             api_token: None,
+            max_connections: default_max_connections(),
         }
     }
 }
@@ -457,16 +464,28 @@ pub enum RestartPolicy {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct SandboxConfig {
-    /// Sandbox mode: "trust", "bubblewrap", "docker"
-    pub mode: String,
+    /// Sandbox execution mode.
+    pub mode: SandboxMode,
 }
 
 impl Default for SandboxConfig {
     fn default() -> Self {
         Self {
-            mode: "trust".to_string(),
+            mode: SandboxMode::Trust,
         }
     }
+}
+
+/// Sandbox execution mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxMode {
+    /// No sandboxing — commands run directly on the host.
+    Trust,
+    /// Bubblewrap sandbox (Linux only).
+    Bubblewrap,
+    /// Docker-based sandbox.
+    Docker,
 }
 
 // ============================================================================
@@ -536,7 +555,7 @@ mod tests {
         assert!(config.agents_dir.is_none());
         assert!(config.services.session.path.is_none());
         assert!(config.world_memory.path.is_none());
-        assert_eq!(config.sandbox.mode, "trust");
+        assert_eq!(config.sandbox.mode, SandboxMode::Trust);
     }
 
     #[tokio::test]
@@ -802,7 +821,7 @@ sandbox:
         .unwrap();
 
         let config = Config::load(file.path().to_str().unwrap()).await.unwrap();
-        assert_eq!(config.sandbox.mode, "bubblewrap");
+        assert_eq!(config.sandbox.mode, SandboxMode::Bubblewrap);
     }
 
     #[tokio::test]
@@ -811,7 +830,7 @@ sandbox:
         writeln!(file, "# empty config").unwrap();
 
         let config = Config::load(file.path().to_str().unwrap()).await.unwrap();
-        assert_eq!(config.sandbox.mode, "trust");
+        assert_eq!(config.sandbox.mode, SandboxMode::Trust);
     }
 
     #[tokio::test]

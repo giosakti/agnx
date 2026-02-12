@@ -54,6 +54,7 @@ pub async fn test_app_state() -> AppState {
         api_token: None,
         idle_timeout_seconds: 60,
         keep_alive_interval_seconds: 15,
+        max_connections: 1024,
         background_tasks: BackgroundTasks::new(),
         shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
     }

@@ -101,10 +101,10 @@ pub async fn run(
     }
 
     // Initialize sandbox based on config (needed for gateway handler)
-    let sandbox: Arc<dyn Sandbox> = match config.sandbox.mode.as_str() {
-        "trust" => Arc::new(TrustSandbox::new()),
-        other => {
-            warn!(mode = %other, "Unknown sandbox mode, falling back to trust");
+    let sandbox: Arc<dyn Sandbox> = match config.sandbox.mode {
+        config::SandboxMode::Trust => Arc::new(TrustSandbox::new()),
+        config::SandboxMode::Bubblewrap | config::SandboxMode::Docker => {
+            warn!(mode = ?config.sandbox.mode, "Sandbox mode not yet implemented, falling back to trust");
             Arc::new(TrustSandbox::new())
         }
     };
@@ -241,6 +241,7 @@ pub async fn run(
         api_token: config.server.api_token.clone(),
         idle_timeout_seconds: config.server.idle_timeout_seconds,
         keep_alive_interval_seconds: config.server.keep_alive_interval_seconds,
+        max_connections: config.server.max_connections,
         background_tasks: background_tasks.clone(),
         shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
     };

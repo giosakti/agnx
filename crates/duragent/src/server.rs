@@ -6,6 +6,7 @@ use axum::Router;
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use tokio::sync::{Mutex, oneshot};
+use tower::limit::ConcurrencyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
 
 use crate::agent::{AgentStore, PolicyLocks};
@@ -51,6 +52,7 @@ pub struct AppState {
     pub api_token: Option<String>,
     pub idle_timeout_seconds: u64,
     pub keep_alive_interval_seconds: u64,
+    pub max_connections: usize,
     pub background_tasks: BackgroundTasks,
     pub shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 }
@@ -67,6 +69,8 @@ pub fn shutdown_channel() -> (oneshot::Sender<()>, oneshot::Receiver<()>) {
 }
 
 pub fn build_app(state: AppState, request_timeout_seconds: u64) -> Router {
+    let max_connections = state.max_connections;
+
     // SSE streaming routes - no request timeout (uses idle timeout internally)
     let streaming_routes = Router::new()
         .route(
@@ -107,7 +111,8 @@ pub fn build_app(state: AppState, request_timeout_seconds: u64) -> Router {
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             handlers::api_auth::require_api_token,
-        ));
+        ))
+        .layer(ConcurrencyLimitLayer::new(max_connections));
 
     // Admin routes (no timeout, state required for shutdown)
     let admin_routes = Router::new()
