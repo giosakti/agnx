@@ -45,11 +45,15 @@ impl AuthStorage {
 
     /// Load credentials from disk. Returns empty storage if file doesn't exist.
     pub fn load(path: &Path) -> Result<Self> {
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-        let contents = std::fs::read_to_string(path)
-            .with_context(|| format!("reading auth file: {}", path.display()))?;
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(e) => {
+                return Err(
+                    anyhow::Error::new(e).context(format!("reading auth file: {}", path.display()))
+                );
+            }
+        };
         let storage: Self = serde_json::from_str(&contents)
             .with_context(|| format!("parsing auth file: {}", path.display()))?;
         Ok(storage)
@@ -79,6 +83,11 @@ impl AuthStorage {
             writer
                 .write_all(contents.as_bytes())
                 .with_context(|| format!("writing auth file: {}", path.display()))?;
+            let file = writer
+                .into_inner()
+                .map_err(|e| anyhow::anyhow!("flushing auth file: {}", e))?;
+            file.sync_all()
+                .with_context(|| format!("syncing auth file: {}", path.display()))?;
         }
         #[cfg(not(unix))]
         {
