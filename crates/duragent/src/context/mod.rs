@@ -255,6 +255,12 @@ impl StructuredContext {
             included_from = i;
         }
 
+        // Skip forward past any orphaned Tool messages (their Assistant+tool_calls was truncated)
+        while included_from < self.messages.len() && self.messages[included_from].role == Role::Tool
+        {
+            included_from += 1;
+        }
+
         // Inject truncation notice if messages were omitted
         let omitted = included_from;
         if omitted > 0 {
@@ -601,6 +607,46 @@ mod tests {
                 .content_str()
                 .contains("conversation truncated")
         );
+    }
+
+    #[test]
+    fn render_with_budget_skips_orphaned_tool_messages() {
+        let mut ctx = StructuredContext::new();
+        ctx.set_messages(vec![
+            Message::text(Role::User, "first question"),
+            Message::assistant_tool_calls(vec![crate::llm::ToolCall {
+                id: "call_1".to_string(),
+                tool_type: "function".to_string(),
+                function: crate::llm::FunctionCall {
+                    name: "bash".to_string(),
+                    arguments: "{}".to_string(),
+                },
+            }]),
+            Message::tool_result("call_1", "tool output"),
+            Message::text(Role::User, "second question"),
+            Message::text(Role::Assistant, "final answer"),
+        ]);
+
+        // Use a budget that can only fit the last 2 messages
+        let budget = TokenBudget {
+            max_input_tokens: 100,
+            max_output_tokens: 10,
+            max_history_tokens: 30,
+        };
+
+        let request = ctx.render_with_budget("gpt-4", None, None, vec![], &budget);
+
+        // The first included conversation message must never be Role::Tool
+        for msg in &request.messages {
+            if msg.role == Role::User || msg.role == Role::Assistant || msg.role == Role::Tool {
+                assert_ne!(
+                    msg.role,
+                    Role::Tool,
+                    "first included conversation message must not be Role::Tool"
+                );
+                break;
+            }
+        }
     }
 
     #[test]

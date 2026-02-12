@@ -176,7 +176,9 @@ impl SessionRegistry {
         }
 
         // Store the task handle for graceful shutdown after durability is confirmed
-        self.task_handles.lock().await.push(task_handle);
+        let mut guard = self.task_handles.lock().await;
+        guard.retain(|h| !h.is_finished());
+        guard.push(task_handle);
 
         Ok(handle)
     }
@@ -387,6 +389,16 @@ impl SessionRegistry {
             }
         };
 
+        // Extract config values before moving snapshot.config into the new snapshot.
+        let recover_silent_buffer_cap = snapshot
+            .config
+            .silent_buffer_cap
+            .unwrap_or(DEFAULT_SILENT_BUFFER_CAP);
+        let recover_actor_message_limit = snapshot
+            .config
+            .actor_message_limit
+            .unwrap_or(DEFAULT_ACTOR_MESSAGE_LIMIT);
+
         // Build snapshot for actor recovery.
         // Keep the original checkpoint_seq; pending_messages are passed separately.
         let recovered_snapshot = super::snapshot::SessionSnapshot::new(
@@ -404,8 +416,8 @@ impl SessionRegistry {
             snapshot: recovered_snapshot,
             store: self.store.clone(),
             pending_messages,
-            silent_buffer_cap: DEFAULT_SILENT_BUFFER_CAP,
-            actor_message_limit: DEFAULT_ACTOR_MESSAGE_LIMIT,
+            silent_buffer_cap: recover_silent_buffer_cap,
+            actor_message_limit: recover_actor_message_limit,
             compaction_mode: self.compaction_mode,
         };
 
@@ -413,7 +425,9 @@ impl SessionRegistry {
         let handle = SessionHandle::new(tx, snapshot.session_id.clone(), snapshot.agent.clone());
 
         // Store the task handle for graceful shutdown
-        self.task_handles.lock().await.push(task_handle);
+        let mut guard = self.task_handles.lock().await;
+        guard.retain(|h| !h.is_finished());
+        guard.push(task_handle);
 
         self.handles.insert(snapshot.session_id.clone(), handle);
 
