@@ -258,7 +258,16 @@ impl SessionMessageQueue {
 ///
 /// Joins message texts with newlines. Uses the first message as the base,
 /// replacing its text content with the combined text.
+///
+/// # Panics
+///
+/// Panics if `messages` is empty.
 pub fn combine_messages(messages: Vec<QueuedMessage>) -> QueuedMessage {
+    debug_assert!(
+        !messages.is_empty(),
+        "combine_messages called with empty vec"
+    );
+
     if messages.len() == 1 {
         return messages.into_iter().next().unwrap();
     }
