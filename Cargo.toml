@@ -72,7 +72,7 @@ teloxide = { version = "0.17", features = ["macros"] }
 # Dev dependencies
 http-body-util = "0.1"
 tempfile = "3"
-tower = { version = "0.5", features = ["util"] }
+tower = { version = "0.5", features = ["util", "limit"] }
 
 [profile.release]
 strip = true
