@@ -3,6 +3,8 @@
 //! `SessionHandle` is a thin wrapper around an `mpsc::Sender<SessionCommand>`.
 //! It provides async methods for all session operations and is cheap to clone.
 
+use std::time::Duration;
+
 use tokio::sync::{mpsc, oneshot};
 
 use crate::api::SessionStatus;
@@ -11,6 +13,9 @@ use crate::llm::{Message, Usage};
 use super::actor_types::{ActorError, SessionCommand, SessionMetadata, SilentMessageEntry};
 use super::events::ApprovalDecisionType;
 use super::snapshot::PendingApproval;
+
+/// Defensive timeout for actor request-reply (30 seconds).
+const ACTOR_REPLY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Handle for interacting with a session actor.
 ///
@@ -37,6 +42,14 @@ impl SessionHandle {
     /// Get the agent name.
     pub fn agent(&self) -> &str {
         &self.agent
+    }
+
+    /// Wait for an actor reply with a defensive timeout.
+    async fn await_reply<T>(&self, reply_rx: oneshot::Receiver<T>) -> Result<T, ActorError> {
+        tokio::time::timeout(ACTOR_REPLY_TIMEOUT, reply_rx)
+            .await
+            .map_err(|_| ActorError::ActorTimeout)?
+            .map_err(|_| ActorError::ActorShutdown)
     }
 
     // ------------------------------------------------------------------------
@@ -85,7 +98,7 @@ impl SessionHandle {
             .await
             .map_err(|_| ActorError::ActorShutdown)?;
 
-        reply_rx.await.map_err(|_| ActorError::ActorShutdown)?
+        self.await_reply(reply_rx).await?
     }
 
     /// Add an assistant message to the session.
@@ -119,7 +132,7 @@ impl SessionHandle {
             .await
             .map_err(|_| ActorError::ActorShutdown)?;
 
-        reply_rx.await.map_err(|_| ActorError::ActorShutdown)?
+        self.await_reply(reply_rx).await?
     }
 
     /// Add a silent message to session history, excluded from LLM conversation.
@@ -144,7 +157,7 @@ impl SessionHandle {
             .await
             .map_err(|_| ActorError::ActorShutdown)?;
 
-        let seq = reply_rx.await.map_err(|_| ActorError::ActorShutdown)??;
+        let seq = self.await_reply(reply_rx).await??;
         self.force_flush().await?;
         Ok(seq)
     }
@@ -183,7 +196,7 @@ impl SessionHandle {
             .await
             .map_err(|_| ActorError::ActorShutdown)?;
 
-        reply_rx.await.map_err(|_| ActorError::ActorShutdown)?
+        self.await_reply(reply_rx).await?
     }
 
     /// Record a tool result event.
@@ -218,7 +231,7 @@ impl SessionHandle {
             .await
             .map_err(|_| ActorError::ActorShutdown)?;
 
-        reply_rx.await.map_err(|_| ActorError::ActorShutdown)?
+        self.await_reply(reply_rx).await?
     }
 
     /// Record an approval required event.
@@ -250,7 +263,7 @@ impl SessionHandle {
             .await
             .map_err(|_| ActorError::ActorShutdown)?;
 
-        reply_rx.await.map_err(|_| ActorError::ActorShutdown)?
+        self.await_reply(reply_rx).await?
     }
 
     /// Record an approval decision event.
@@ -271,7 +284,7 @@ impl SessionHandle {
             .await
             .map_err(|_| ActorError::ActorShutdown)?;
 
-        let seq = reply_rx.await.map_err(|_| ActorError::ActorShutdown)??;
+        let seq = self.await_reply(reply_rx).await??;
         self.force_flush().await?;
         Ok(seq)
     }
@@ -289,7 +302,7 @@ impl SessionHandle {
             .await
             .map_err(|_| ActorError::ActorShutdown)?;
 
-        reply_rx.await.map_err(|_| ActorError::ActorShutdown)?
+        self.await_reply(reply_rx).await?
     }
 
     /// Clear the pending approval from the session.
@@ -302,7 +315,7 @@ impl SessionHandle {
             .await
             .map_err(|_| ActorError::ActorShutdown)?;
 
-        reply_rx.await.map_err(|_| ActorError::ActorShutdown)?
+        self.await_reply(reply_rx).await?
     }
 
     /// Set the session status.
@@ -318,7 +331,7 @@ impl SessionHandle {
             .await
             .map_err(|_| ActorError::ActorShutdown)?;
 
-        reply_rx.await.map_err(|_| ActorError::ActorShutdown)?
+        self.await_reply(reply_rx).await?
     }
 
     /// Record an error event.
@@ -335,7 +348,7 @@ impl SessionHandle {
             .await
             .map_err(|_| ActorError::ActorShutdown)?;
 
-        let seq = reply_rx.await.map_err(|_| ActorError::ActorShutdown)??;
+        let seq = self.await_reply(reply_rx).await??;
         self.force_flush().await?;
         Ok(seq)
     }
@@ -352,7 +365,7 @@ impl SessionHandle {
             .await
             .map_err(|_| ActorError::ActorShutdown)?;
 
-        reply_rx.await.map_err(|_| ActorError::ActorShutdown)?
+        self.await_reply(reply_rx).await?
     }
 
     /// Get recent silent messages from the ephemeral buffer for context injection.
@@ -374,7 +387,7 @@ impl SessionHandle {
             .await
             .map_err(|_| ActorError::ActorShutdown)?;
 
-        reply_rx.await.map_err(|_| ActorError::ActorShutdown)?
+        self.await_reply(reply_rx).await?
     }
 
     /// Get session metadata.
@@ -385,7 +398,7 @@ impl SessionHandle {
             .await
             .map_err(|_| ActorError::ActorShutdown)?;
 
-        reply_rx.await.map_err(|_| ActorError::ActorShutdown)?
+        self.await_reply(reply_rx).await?
     }
 
     /// Get the pending approval, if any.
@@ -396,7 +409,7 @@ impl SessionHandle {
             .await
             .map_err(|_| ActorError::ActorShutdown)?;
 
-        reply_rx.await.map_err(|_| ActorError::ActorShutdown)?
+        self.await_reply(reply_rx).await?
     }
 
     // ------------------------------------------------------------------------
@@ -424,7 +437,7 @@ impl SessionHandle {
             .await
             .map_err(|_| ActorError::ActorShutdown)?;
 
-        reply_rx.await.map_err(|_| ActorError::ActorShutdown)?
+        self.await_reply(reply_rx).await?
     }
 
     /// Force an immediate flush of pending events to disk.
@@ -435,7 +448,7 @@ impl SessionHandle {
             .await
             .map_err(|_| ActorError::ActorShutdown)?;
 
-        reply_rx.await.map_err(|_| ActorError::ActorShutdown)?
+        self.await_reply(reply_rx).await?
     }
 
     /// Force an immediate flush and snapshot.
@@ -446,7 +459,7 @@ impl SessionHandle {
             .await
             .map_err(|_| ActorError::ActorShutdown)?;
 
-        reply_rx.await.map_err(|_| ActorError::ActorShutdown)?
+        self.await_reply(reply_rx).await?
     }
 }
 

@@ -130,6 +130,10 @@ pub enum ActorError {
     #[error("actor has shut down")]
     ActorShutdown,
 
+    /// The actor did not reply within the timeout.
+    #[error("actor reply timed out")]
+    ActorTimeout,
+
     /// Session not found.
     #[error("session not found: {0}")]
     NotFound(String),
