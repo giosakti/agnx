@@ -450,7 +450,7 @@ pub async fn approve_command(
         && let Err(e) = crate::agent::ToolPolicy::add_pattern_and_save(
             state.services.policy_store.as_ref(),
             &agent_name,
-            crate::agent::ToolType::Bash,
+            pending.tool_type,
             &req.command,
             &state.policy_locks,
         )

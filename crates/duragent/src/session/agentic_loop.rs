@@ -19,7 +19,7 @@ use tracing::{debug, warn};
 
 use serde::{Deserialize, Serialize};
 
-use crate::agent::{AgentSpec, ContextConfig};
+use crate::agent::{AgentSpec, ContextConfig, ToolType};
 use crate::config::DEFAULT_TOOLS_DIR;
 use crate::context::{drop_oldest_iterations, mask_tool_results, truncate_tool_result};
 use crate::llm::{ChatRequest, LLMError, LLMProvider, Message, Role, StreamEvent, ToolCall, Usage};
@@ -90,12 +90,20 @@ pub struct PendingApproval {
     pub arguments: serde_json::Value,
     /// The command being approved (for display).
     pub command: String,
+    /// The tool type (for saving "Allow Always" patterns).
+    #[serde(default = "default_tool_type")]
+    pub tool_type: ToolType,
     /// Accumulated messages to restore when resuming the loop.
     pub messages: Vec<Message>,
     /// Platform sender ID of the user who triggered this approval.
     /// Used in group chats to ensure only the requester can approve.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requester_id: Option<String>,
+}
+
+/// Default tool type for backwards compatibility with persisted approvals.
+fn default_tool_type() -> ToolType {
+    ToolType::Bash
 }
 
 impl PendingApproval {
@@ -105,6 +113,7 @@ impl PendingApproval {
         tool_name: String,
         arguments: serde_json::Value,
         command: String,
+        tool_type: ToolType,
         messages: Vec<Message>,
     ) -> Self {
         Self {
@@ -112,6 +121,7 @@ impl PendingApproval {
             tool_name,
             arguments,
             command,
+            tool_type,
             messages,
             requester_id: None,
         }
@@ -456,9 +466,13 @@ async fn execute_tool_call(
     // Handle the execution result
     let result = match exec_result {
         Ok(r) => r,
-        Err(ToolError::ApprovalRequired { call_id, command }) => {
+        Err(ToolError::ApprovalRequired {
+            call_id,
+            command,
+            tool_type,
+        }) => {
             return handle_approval_required(
-                handle, tool_call, &arguments, call_id, command, messages, content,
+                handle, tool_call, &arguments, call_id, command, tool_type, messages, content,
             )
             .await;
         }
@@ -508,6 +522,7 @@ async fn handle_approval_required(
     arguments: &serde_json::Value,
     call_id: String,
     command: String,
+    tool_type: ToolType,
     messages: &[Message],
     content: &str,
 ) -> ToolCallOutcome {
@@ -534,6 +549,7 @@ async fn handle_approval_required(
         tool_call.function.name.clone(),
         arguments.clone(),
         command,
+        tool_type,
         messages.to_vec(),
     );
 
@@ -595,6 +611,7 @@ mod tests {
             "bash".to_string(),
             serde_json::json!({"command": "ls"}),
             "ls".to_string(),
+            ToolType::Bash,
             vec![],
         );
         let result = AgenticResult::AwaitingApproval {

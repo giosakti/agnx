@@ -6,6 +6,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tracing::warn;
 
+use crate::agent::ToolType;
 use crate::llm::{FunctionDefinition, ToolDefinition};
 use crate::sandbox::Sandbox;
 
@@ -67,6 +68,10 @@ impl CliTool {
 impl Tool for CliTool {
     fn name(&self) -> &str {
         &self.name
+    }
+
+    fn tool_type(&self) -> ToolType {
+        ToolType::Cli
     }
 
     fn definition(&self) -> ToolDefinition {

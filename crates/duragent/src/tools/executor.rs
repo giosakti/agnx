@@ -179,6 +179,7 @@ impl ToolExecutor {
                 return Err(ToolError::ApprovalRequired {
                     call_id: tool_call.id.clone(),
                     command: invocation,
+                    tool_type,
                 });
             }
             PolicyDecision::Allow => {
@@ -218,13 +219,16 @@ impl ToolExecutor {
         tool_name: &str,
         tool_call: &ToolCall,
     ) -> (ToolType, String) {
-        if tool_name == "bash" {
-            // For bash, extract the command from arguments
-            let command = extract_bash_command(&tool_call.function.arguments);
-            (ToolType::Bash, command)
+        let tool = self.tools.get(tool_name);
+        let tool_type = tool.map(|t| t.tool_type()).unwrap_or(ToolType::Builtin);
+
+        let invocation = if tool_type == ToolType::Bash {
+            extract_bash_command(&tool_call.function.arguments)
         } else {
-            (ToolType::Builtin, tool_name.to_string())
-        }
+            tool_name.to_string()
+        };
+
+        (tool_type, invocation)
     }
 
     /// Internal: execute tool and send notifications.
@@ -579,9 +583,14 @@ mod tests {
         let result = executor.execute(&tool_call).await;
 
         match result {
-            Err(ToolError::ApprovalRequired { call_id, command }) => {
+            Err(ToolError::ApprovalRequired {
+                call_id,
+                command,
+                tool_type,
+            }) => {
                 assert_eq!(call_id, "call_1");
                 assert_eq!(command, "echo hello");
+                assert_eq!(tool_type, ToolType::Bash);
             }
             _ => panic!("Expected ApprovalRequired error"),
         }

@@ -6,7 +6,7 @@ use duragent_gateway_protocol::CallbackQueryData;
 
 use super::build_approval_keyboard;
 use super::handler::GatewayMessageHandler;
-use crate::agent::{ToolPolicy, ToolType};
+use crate::agent::ToolPolicy;
 use crate::api::SessionStatus;
 use crate::context::ContextBuilder;
 use crate::llm::{FunctionCall, ToolCall};
@@ -123,7 +123,7 @@ impl GatewayMessageHandler {
             && let Err(e) = ToolPolicy::add_pattern_and_save(
                 self.services.policy_store.as_ref(),
                 handle.agent(),
-                ToolType::Bash,
+                pending.tool_type,
                 &pending.command,
                 &self.policy_locks,
             )

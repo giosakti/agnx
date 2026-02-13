@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use crate::agent::ToolType;
 use crate::llm::{FunctionDefinition, ToolDefinition};
 use crate::sandbox::Sandbox;
 
@@ -29,6 +30,10 @@ impl BashTool {
 impl Tool for BashTool {
     fn name(&self) -> &str {
         "bash"
+    }
+
+    fn tool_type(&self) -> ToolType {
+        ToolType::Bash
     }
 
     fn definition(&self) -> ToolDefinition {
