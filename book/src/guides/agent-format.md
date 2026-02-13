@@ -57,7 +57,9 @@ spec:
     provider: openrouter
     name: anthropic/claude-sonnet-4
     temperature: 0.7
+    max_input_tokens: 100000
     max_output_tokens: 4096
+    # base_url: https://custom-endpoint.example.com/v1
 
   soul: ./SOUL.md
   system_prompt: ./SYSTEM_PROMPT.md
@@ -66,19 +68,40 @@ spec:
   session:
     on_disconnect: continue
     max_tool_iterations: 10
+    llm_timeout_seconds: 300
     ttl_hours: 48
     compaction: archive
     context:
       max_history_tokens: 20000
       max_tool_result_tokens: 8000
+      tool_result_truncation: head
+      tool_result_keep_first: 2
+      tool_result_keep_last: 5
 
   access:
     dm:
-      policy: open
+      policy: allowlist
+      allowlist: ["123456789"]
     groups:
       policy: allowlist
       allowlist: ["telegram:-100123456"]
       activation: mention
+      sender_default: allow
+      sender_overrides:
+        "999999": block
+        "888888": passive
+      context_buffer:
+        mode: silent
+        max_messages: 100
+        max_age_hours: 24
+      queue:
+        mode: batch
+        max_pending: 10
+        overflow: drop_old
+        # reject_message: "I'm busy, please wait."
+        debounce:
+          enabled: true
+          window_ms: 1500
 
   memory:
     backend: filesystem
@@ -86,6 +109,22 @@ spec:
   tools:
     - type: builtin
       name: bash
+    - type: builtin
+      name: web_search
+    - type: builtin
+      name: web_fetch
+    - type: builtin
+      name: spawn_process
+    - type: builtin
+      name: manage_process
+    - type: builtin
+      name: schedule_task
+    - type: builtin
+      name: list_schedules
+    - type: builtin
+      name: cancel_schedule
+    - type: builtin
+      name: reload_tools
     - type: cli
       name: git-helper
       command: ./tools/git-helper/script.sh

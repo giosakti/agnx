@@ -41,8 +41,12 @@ spec:
 | `schedule_task` | Create a scheduled task |
 | `list_schedules` | List active schedules |
 | `cancel_schedule` | Cancel a schedule by ID |
+| `spawn_process` | Start a background process (optional tmux) |
+| `manage_process` | Interact with background processes (list, status, log, capture, send_keys, write, kill) |
 
 Memory tools (`recall`, `remember`, `reflect`, `update_world`) are automatically registered when memory is configured. See [Memory](./memory.md).
+
+Process tools (`spawn_process`, `manage_process`) manage long-running commands. See [Background Processes](./background-processes.md).
 
 #### reload_tools
 

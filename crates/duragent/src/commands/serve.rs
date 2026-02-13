@@ -15,6 +15,8 @@ use duragent::client::AgentClient;
 use duragent::config::{self, Config, ExternalGatewayConfig};
 use duragent::gateway::{GatewayManager, SubprocessGateway};
 use duragent::llm::ProviderRegistry;
+use duragent::process::ProcessRegistryHandle;
+use duragent::process::registry::spawn_cleanup_task;
 use duragent::sandbox::{Sandbox, TrustSandbox};
 use duragent::scheduler::{SchedulerConfig, SchedulerService};
 use duragent::server::{self, RuntimeServices};
@@ -188,6 +190,14 @@ pub async fn run(
     let scheduler_handle = scheduler_service.start().await;
     info!("Scheduler service started");
 
+    // Initialize process registry for background process management
+    let processes_path = workspace.join(config::DEFAULT_PROCESSES_DIR);
+    let process_registry =
+        ProcessRegistryHandle::new(processes_path, services.clone(), gateway_sender.clone()).await;
+    process_registry.recover().await;
+    let cleanup_handle = spawn_cleanup_task(process_registry.clone());
+    info!("Process registry initialized");
+
     // Set up gateway message handler with sandbox and gateway_manager
     let routing_config = build_routing_config(&config, &store);
     let gateway_handler =
@@ -198,6 +208,7 @@ pub async fn run(
             policy_locks: policy_locks.clone(),
             scheduler: Some(scheduler_handle.clone()),
             chat_session_cache: chat_session_cache.clone(),
+            process_registry: Some(process_registry.clone()),
         });
 
     gateways
@@ -238,6 +249,7 @@ pub async fn run(
     let state = server::AppState {
         services,
         scheduler: Some(scheduler_handle.clone()),
+        process_registry: Some(process_registry.clone()),
         policy_locks,
         admin_token: config.server.admin_token.clone(),
         api_token: config.server.api_token.clone(),
@@ -292,6 +304,10 @@ pub async fn run(
     )
     .with_graceful_shutdown(shutdown_signal(shutdown_rx))
     .await?;
+
+    // Shutdown process registry gracefully
+    cleanup_handle.abort();
+    process_registry.shutdown();
 
     // Shutdown scheduler gracefully
     scheduler_handle.shutdown().await;

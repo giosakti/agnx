@@ -20,6 +20,7 @@
 - [Tools and Policies](./guides/tools-and-policies.md)
 - [Memory](./guides/memory.md)
 - [Scheduling](./guides/scheduling.md)
+- [Background Processes](./guides/background-processes.md)
 - [Gateway Plugins](./guides/gateway-plugins.md)
 - [Group Chat](./guides/group-chat.md)
 - [Writing Skills](./guides/writing-skills.md)

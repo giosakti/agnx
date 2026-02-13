@@ -67,6 +67,7 @@ server:
   request_timeout_seconds: 300
   idle_timeout_seconds: 60
   keep_alive_interval_seconds: 15
+  max_connections: 1024
   admin_token: ${ADMIN_TOKEN:-}
   api_token: ${API_TOKEN:-}
 
@@ -89,10 +90,16 @@ sessions:
 
 # Gateways
 gateways:
+  # In-process gateways (require compile-time features)
   telegram:
     enabled: true
     bot_token: ${TELEGRAM_BOT_TOKEN}
 
+  discord:
+    enabled: true
+    bot_token: ${DISCORD_BOT_TOKEN}
+
+  # External gateway plugins (subprocess)
   external:
     - name: discord
       command: /usr/local/bin/duragent-discord
@@ -101,7 +108,7 @@ gateways:
         DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN}
       restart: on_failure
 
-# Routes
+# Routes (evaluated top-to-bottom, first match wins)
 routes:
   - match:
       gateway: telegram
@@ -111,6 +118,7 @@ routes:
   - match:
       gateway: telegram
       chat_type: group
+      chat_id: "-100123456"
     agent: group-moderator
 
   - match: {}

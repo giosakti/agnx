@@ -46,6 +46,7 @@ pub async fn test_app_state() -> AppState {
             workspace_tools_path: tmp.path().join("tools"),
         },
         scheduler: None,
+        process_registry: None,
         policy_locks: duragent::sync::KeyedLocks::new(),
         admin_token: None,
         api_token: None,

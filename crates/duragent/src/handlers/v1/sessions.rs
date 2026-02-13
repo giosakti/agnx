@@ -261,58 +261,6 @@ pub async fn send_message(
     (StatusCode::OK, Json(response)).into_response()
 }
 
-/// Handle send_message for agents with tools using the agentic loop.
-async fn send_message_agentic(state: &AppState, ctx: ChatContext) -> Response {
-    let session_id = ctx.handle.id().to_string();
-    let agent_name = ctx.handle.agent().to_string();
-
-    // Load policy from store (picks up runtime changes from AllowAlways)
-    let policy = state.services.policy_store.load(&agent_name).await;
-
-    // Create tools and executor
-    let deps = ToolDependencies {
-        sandbox: state.services.sandbox.clone(),
-        agent_dir: ctx.agent_dir.clone(),
-        scheduler: None,
-        execution_context: None,
-        workspace_tools_dir: Some(state.services.workspace_tools_path.clone()),
-    };
-    let mut executor = build_executor(
-        &ctx.agent_spec,
-        &agent_name,
-        &session_id,
-        policy,
-        deps,
-        &state.services.world_memory_path,
-    )
-    .with_reload_deps(ReloadDeps {
-        sandbox: state.services.sandbox.clone(),
-        agent_dir: ctx.agent_dir.clone(),
-        workspace_tools_dir: Some(state.services.workspace_tools_path.clone()),
-        agent_tool_configs: ctx.agent_spec.tools.clone(),
-    });
-
-    // Run the agentic loop with SessionHandle
-    let result = match run_agentic_loop(
-        ctx.provider,
-        &mut executor,
-        &ctx.agent_spec,
-        ctx.request.messages,
-        &ctx.handle,
-        ctx.tool_refs.as_ref(),
-    )
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            error!(error = %e, "agentic loop failed");
-            return problem_details::internal_error("agentic loop failed").into_response();
-        }
-    };
-
-    handle_agentic_result(&ctx.handle, result, false).await
-}
-
 /// POST /api/v1/sessions/{session_id}/stream
 ///
 /// SSE endpoint for streaming chat completions.
@@ -483,6 +431,9 @@ pub async fn approve_command(
             scheduler: None,
             execution_context: None,
             workspace_tools_dir: Some(state.services.workspace_tools_path.clone()),
+            process_registry: state.process_registry.clone(),
+            session_id: Some(session_id.clone()),
+            agent_name: Some(agent_name.clone()),
         };
         let executor = build_executor(
             &agent_spec,
@@ -538,6 +489,9 @@ pub async fn approve_command(
         scheduler: None,
         execution_context: None,
         workspace_tools_dir: Some(state.services.workspace_tools_path.clone()),
+        process_registry: state.process_registry.clone(),
+        session_id: Some(session_id.clone()),
+        agent_name: Some(agent_name.clone()),
     };
     let mut executor = build_executor(
         &agent_spec,
@@ -630,6 +584,61 @@ struct ChatContext {
     agent_dir: std::path::PathBuf,
     handle: SessionHandle,
     tool_refs: Option<std::collections::HashSet<String>>,
+}
+
+/// Handle send_message for agents with tools using the agentic loop.
+async fn send_message_agentic(state: &AppState, ctx: ChatContext) -> Response {
+    let session_id = ctx.handle.id().to_string();
+    let agent_name = ctx.handle.agent().to_string();
+
+    // Load policy from store (picks up runtime changes from AllowAlways)
+    let policy = state.services.policy_store.load(&agent_name).await;
+
+    // Create tools and executor
+    let deps = ToolDependencies {
+        sandbox: state.services.sandbox.clone(),
+        agent_dir: ctx.agent_dir.clone(),
+        scheduler: None,
+        execution_context: None,
+        workspace_tools_dir: Some(state.services.workspace_tools_path.clone()),
+        process_registry: state.process_registry.clone(),
+        session_id: Some(session_id.clone()),
+        agent_name: Some(agent_name.clone()),
+    };
+    let mut executor = build_executor(
+        &ctx.agent_spec,
+        &agent_name,
+        &session_id,
+        policy,
+        deps,
+        &state.services.world_memory_path,
+    )
+    .with_reload_deps(ReloadDeps {
+        sandbox: state.services.sandbox.clone(),
+        agent_dir: ctx.agent_dir.clone(),
+        workspace_tools_dir: Some(state.services.workspace_tools_path.clone()),
+        agent_tool_configs: ctx.agent_spec.tools.clone(),
+    });
+
+    // Run the agentic loop with SessionHandle
+    let result = match run_agentic_loop(
+        ctx.provider,
+        &mut executor,
+        &ctx.agent_spec,
+        ctx.request.messages,
+        &ctx.handle,
+        ctx.tool_refs.as_ref(),
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            error!(error = %e, "agentic loop failed");
+            return problem_details::internal_error("agentic loop failed").into_response();
+        }
+    };
+
+    handle_agentic_result(&ctx.handle, result, false).await
 }
 
 /// Prepare chat context for LLM request.

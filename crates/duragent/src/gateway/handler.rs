@@ -31,6 +31,7 @@ use crate::api::SessionStatus;
 use crate::context::{
     BlockSource, ContextBuilder, SystemBlock, TokenBudget, load_all_directives, priority,
 };
+use crate::process::ProcessRegistryHandle;
 use crate::scheduler::SchedulerHandle;
 use crate::server::RuntimeServices;
 use crate::session::{AgenticResult, ChatSessionCache, SessionHandle, run_agentic_loop};
@@ -49,6 +50,7 @@ pub struct GatewayHandlerConfig {
     pub policy_locks: PolicyLocks,
     pub scheduler: Option<SchedulerHandle>,
     pub chat_session_cache: ChatSessionCache,
+    pub process_registry: Option<ProcessRegistryHandle>,
 }
 
 /// Handler that routes gateway messages to sessions.
@@ -68,6 +70,8 @@ pub struct GatewayMessageHandler {
     pub(super) policy_locks: PolicyLocks,
     /// Scheduler handle for schedule tools.
     pub(super) scheduler: Option<SchedulerHandle>,
+    /// Process registry handle for background process tools.
+    pub(super) process_registry: Option<ProcessRegistryHandle>,
 }
 
 // ============================================================================
@@ -91,6 +95,7 @@ impl GatewayMessageHandler {
             routing_config: config.routing_config,
             policy_locks: config.policy_locks,
             scheduler: config.scheduler,
+            process_registry: config.process_registry,
         }
     }
 
@@ -311,59 +316,6 @@ impl MessageHandler for GatewayMessageHandler {
 // ============================================================================
 
 impl GatewayMessageHandler {
-    /// Build a context buffer system block from recent silent messages.
-    ///
-    /// Returns None if there are no recent silent messages.
-    async fn build_context_buffer_block(
-        &self,
-        handle: &SessionHandle,
-        config: &ContextBufferConfig,
-    ) -> Option<SystemBlock> {
-        let max_age = chrono::Duration::hours(config.max_age_hours as i64);
-        let entries = handle
-            .get_recent_silent_messages(config.max_messages, max_age)
-            .await
-            .ok()?;
-
-        if entries.is_empty() {
-            return None;
-        }
-
-        let mut buffer = String::from("Recent group conversation before you were mentioned:\n\n");
-        for entry in &entries {
-            buffer.push_str(&entry.content);
-            buffer.push('\n');
-        }
-
-        Some(SystemBlock {
-            content: buffer,
-            label: "group_context".to_string(),
-            source: BlockSource::Session,
-            priority: priority::SESSION,
-        })
-    }
-
-    /// Check if context buffer injection should apply for this routing context.
-    ///
-    /// Returns `None` for passive mode since those messages are already in conversation history.
-    fn should_inject_context_buffer<'a>(
-        &self,
-        agent: &'a AgentSpec,
-        routing: &RoutingContext,
-    ) -> Option<&'a ContextBufferConfig> {
-        if !is_group_chat(&routing.chat_type) {
-            return None;
-        }
-        let access = agent.access.as_ref()?;
-        if access.groups.activation != ActivationMode::Mention {
-            return None;
-        }
-        if access.groups.context_buffer.mode == ContextBufferMode::Passive {
-            return None;
-        }
-        Some(&access.groups.context_buffer)
-    }
-
     /// Process a queued message and return the response text.
     ///
     /// This handles the actual message processing (typing indicator, text extraction,
@@ -600,6 +552,9 @@ impl GatewayMessageHandler {
             scheduler: self.scheduler.clone(),
             execution_context,
             workspace_tools_dir: Some(self.services.workspace_tools_path.clone()),
+            process_registry: self.process_registry.clone(),
+            session_id: Some(handle.id().to_string()),
+            agent_name: Some(handle.agent().to_string()),
         };
         let mut executor = build_executor(
             &agent,
@@ -730,6 +685,59 @@ impl GatewayMessageHandler {
                 None
             }
         }
+    }
+
+    /// Build a context buffer system block from recent silent messages.
+    ///
+    /// Returns None if there are no recent silent messages.
+    async fn build_context_buffer_block(
+        &self,
+        handle: &SessionHandle,
+        config: &ContextBufferConfig,
+    ) -> Option<SystemBlock> {
+        let max_age = chrono::Duration::hours(config.max_age_hours as i64);
+        let entries = handle
+            .get_recent_silent_messages(config.max_messages, max_age)
+            .await
+            .ok()?;
+
+        if entries.is_empty() {
+            return None;
+        }
+
+        let mut buffer = String::from("Recent group conversation before you were mentioned:\n\n");
+        for entry in &entries {
+            buffer.push_str(&entry.content);
+            buffer.push('\n');
+        }
+
+        Some(SystemBlock {
+            content: buffer,
+            label: "group_context".to_string(),
+            source: BlockSource::Session,
+            priority: priority::SESSION,
+        })
+    }
+
+    /// Check if context buffer injection should apply for this routing context.
+    ///
+    /// Returns `None` for passive mode since those messages are already in conversation history.
+    fn should_inject_context_buffer<'a>(
+        &self,
+        agent: &'a AgentSpec,
+        routing: &RoutingContext,
+    ) -> Option<&'a ContextBufferConfig> {
+        if !is_group_chat(&routing.chat_type) {
+            return None;
+        }
+        let access = agent.access.as_ref()?;
+        if access.groups.activation != ActivationMode::Mention {
+            return None;
+        }
+        if access.groups.context_buffer.mode == ContextBufferMode::Passive {
+            return None;
+        }
+        Some(&access.groups.context_buffer)
     }
 }
 
