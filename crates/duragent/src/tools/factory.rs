@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::agent::{AgentSpec, ToolConfig, ToolPolicy};
+use crate::config::DEFAULT_TOOLS_DIR;
 use crate::memory::Memory;
 use crate::sandbox::Sandbox;
 use crate::scheduler::SchedulerHandle;
@@ -121,7 +122,7 @@ fn create_builtin_tool(name: &str, deps: &ToolDependencies) -> Option<SharedTool
         }
         "web_fetch" => Some(Arc::new(WebFetchTool::new())),
         "reload_tools" => {
-            let mut dirs = vec![deps.agent_dir.join("tools")];
+            let mut dirs = vec![deps.agent_dir.join(DEFAULT_TOOLS_DIR)];
             if let Some(ref ws) = deps.workspace_tools_dir {
                 dirs.push(ws.clone());
             }
@@ -175,7 +176,7 @@ pub fn build_executor(
     let explicit_tools = create_tools(&agent.tools, &deps);
 
     // Discover tools from agent and workspace directories
-    let mut discovery_dirs = vec![deps.agent_dir.join("tools")];
+    let mut discovery_dirs = vec![deps.agent_dir.join(DEFAULT_TOOLS_DIR)];
     if let Some(ref ws) = deps.workspace_tools_dir {
         discovery_dirs.push(ws.clone());
     }

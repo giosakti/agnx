@@ -35,7 +35,7 @@ use crate::scheduler::SchedulerHandle;
 use crate::server::RuntimeServices;
 use crate::session::{AgenticResult, ChatSessionCache, SessionHandle, run_agentic_loop};
 use crate::sync::KeyedLocks;
-use crate::tools::{ToolDependencies, ToolExecutionContext, build_executor};
+use crate::tools::{ReloadDeps, ToolDependencies, ToolExecutionContext, build_executor};
 
 // ============================================================================
 // Gateway Message Handler
@@ -599,8 +599,9 @@ impl GatewayMessageHandler {
             agent_dir: agent.agent_dir.clone(),
             scheduler: self.scheduler.clone(),
             execution_context,
+            workspace_tools_dir: Some(self.services.workspace_tools_path.clone()),
         };
-        let executor = build_executor(
+        let mut executor = build_executor(
             &agent,
             handle.agent(),
             handle.id(),
@@ -608,6 +609,13 @@ impl GatewayMessageHandler {
             deps,
             &self.services.world_memory_path,
         );
+
+        let reload_deps = ReloadDeps {
+            sandbox: self.services.sandbox.clone(),
+            agent_dir: agent.agent_dir.clone(),
+            workspace_tools_dir: Some(self.services.workspace_tools_path.clone()),
+            agent_tool_configs: agent.tools.clone(),
+        };
 
         // Build initial messages from history using StructuredContext
         let history = match handle.get_messages().await {
@@ -651,11 +659,12 @@ impl GatewayMessageHandler {
         // Run agentic loop
         let result = match run_agentic_loop(
             provider,
-            &executor,
+            &mut executor,
             &agent,
             messages,
             handle,
             tool_refs.as_ref(),
+            Some(&reload_deps),
         )
         .await
         {

@@ -28,7 +28,7 @@ use crate::session::{
     AccumulatingStream, AgenticResult, ApprovalDecisionType, SessionHandle, StreamConfig,
     resume_agentic_loop, run_agentic_loop,
 };
-use crate::tools::{ToolDependencies, ToolResult, build_executor};
+use crate::tools::{ReloadDeps, ToolDependencies, ToolResult, build_executor};
 
 // ============================================================================
 // Query Types
@@ -275,8 +275,9 @@ async fn send_message_agentic(state: &AppState, ctx: ChatContext) -> Response {
         agent_dir: ctx.agent_dir.clone(),
         scheduler: None,
         execution_context: None,
+        workspace_tools_dir: Some(state.services.workspace_tools_path.clone()),
     };
-    let executor = build_executor(
+    let mut executor = build_executor(
         &ctx.agent_spec,
         &agent_name,
         &session_id,
@@ -285,14 +286,22 @@ async fn send_message_agentic(state: &AppState, ctx: ChatContext) -> Response {
         &state.services.world_memory_path,
     );
 
+    let reload_deps = ReloadDeps {
+        sandbox: state.services.sandbox.clone(),
+        agent_dir: ctx.agent_dir.clone(),
+        workspace_tools_dir: Some(state.services.workspace_tools_path.clone()),
+        agent_tool_configs: ctx.agent_spec.tools.clone(),
+    };
+
     // Run the agentic loop with SessionHandle
     let result = match run_agentic_loop(
         ctx.provider,
-        &executor,
+        &mut executor,
         &ctx.agent_spec,
         ctx.request.messages,
         &ctx.handle,
         ctx.tool_refs.as_ref(),
+        Some(&reload_deps),
     )
     .await
     {
@@ -475,6 +484,7 @@ pub async fn approve_command(
             agent_dir: agent_spec.agent_dir.clone(),
             scheduler: None,
             execution_context: None,
+            workspace_tools_dir: Some(state.services.workspace_tools_path.clone()),
         };
         let executor = build_executor(
             &agent_spec,
@@ -529,8 +539,9 @@ pub async fn approve_command(
         agent_dir: agent_spec.agent_dir.clone(),
         scheduler: None,
         execution_context: None,
+        workspace_tools_dir: Some(state.services.workspace_tools_path.clone()),
     };
-    let executor = build_executor(
+    let mut executor = build_executor(
         &agent_spec,
         &agent_name,
         &session_id,
@@ -538,6 +549,13 @@ pub async fn approve_command(
         deps,
         &state.services.world_memory_path,
     );
+
+    let reload_deps = ReloadDeps {
+        sandbox: state.services.sandbox.clone(),
+        agent_dir: agent_spec.agent_dir.clone(),
+        workspace_tools_dir: Some(state.services.workspace_tools_path.clone()),
+        agent_tool_configs: agent_spec.tools.clone(),
+    };
 
     // Set session to Running before resuming (accurate status during execution)
     if let Err(e) = handle.set_status(SessionStatus::Running).await {
@@ -553,12 +571,13 @@ pub async fn approve_command(
     // Resume the agentic loop with SessionHandle
     let result = match resume_agentic_loop(
         provider,
-        &executor,
+        &mut executor,
         &agent_spec,
         pending,
         tool_result,
         &handle,
         tool_refs.as_ref(),
+        Some(&reload_deps),
     )
     .await
     {

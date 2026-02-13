@@ -20,10 +20,12 @@ use tracing::{debug, warn};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::{AgentSpec, ContextConfig};
+use crate::config::DEFAULT_TOOLS_DIR;
 use crate::context::{drop_oldest_iterations, mask_tool_results, truncate_tool_result};
 use crate::llm::{ChatRequest, LLMError, LLMProvider, Message, Role, StreamEvent, ToolCall, Usage};
 use crate::session::handle::SessionHandle;
-use crate::tools::{ToolError, ToolExecutor, ToolResult};
+use crate::tools::discovery::discover_all_tools;
+use crate::tools::{ReloadDeps, ToolError, ToolExecutor, ToolResult, create_tools};
 
 // ============================================================================
 // Types
@@ -142,15 +144,15 @@ enum ToolCallOutcome {
 /// If `tool_filter` is provided, only those tools will be visible to the LLM.
 pub async fn run_agentic_loop(
     provider: Arc<dyn LLMProvider>,
-    executor: &ToolExecutor,
+    executor: &mut ToolExecutor,
     agent_spec: &AgentSpec,
     initial_messages: Vec<Message>,
     handle: &SessionHandle,
     tool_filter: Option<&HashSet<String>>,
+    reload_deps: Option<&ReloadDeps>,
 ) -> Result<AgenticResult, AgenticError> {
     let max_iterations = agent_spec.session.max_tool_iterations;
     let llm_timeout = Duration::from_secs(agent_spec.session.llm_timeout_seconds);
-    let tool_definitions = executor.tool_definitions(tool_filter);
     let context_config = &agent_spec.session.context;
 
     let mut messages = initial_messages;
@@ -185,6 +187,9 @@ pub async fn run_agentic_loop(
         // Layer 3c: Drop oldest iteration groups if over budget
         drop_oldest_iterations(&mut messages, conversation_end_idx, loop_token_budget);
 
+        // Refresh tool definitions each iteration (picks up reload_tools changes)
+        let tool_definitions = executor.tool_definitions(tool_filter);
+
         debug!(
             iteration = iterations,
             max_iterations,
@@ -198,7 +203,7 @@ pub async fn run_agentic_loop(
             messages.clone(),
             agent_spec.model.temperature,
             agent_spec.model.max_output_tokens,
-            tool_definitions.clone(),
+            tool_definitions,
         );
 
         // Call LLM with streaming (retry on rate limit) + consume stream,
@@ -270,8 +275,13 @@ pub async fn run_agentic_loop(
 
         // Execute tools sequentially to catch approval requirements
         // (We process one at a time so we can pause at the first approval request)
+        let mut reload_requested = false;
         for tool_call in &tool_calls {
             tool_calls_made += 1;
+
+            if tool_call.function.name == "reload_tools" {
+                reload_requested = true;
+            }
 
             let outcome = execute_tool_call(
                 executor,
@@ -299,6 +309,13 @@ pub async fn run_agentic_loop(
             }
         }
 
+        // Rebuild executor if reload_tools was called
+        if reload_requested {
+            if let Some(deps) = reload_deps {
+                rebuild_executor(executor, deps);
+            }
+        }
+
         // Continue loop with updated messages
     }
 }
@@ -310,12 +327,13 @@ pub async fn run_agentic_loop(
 /// until completion or another approval is needed.
 pub async fn resume_agentic_loop(
     provider: Arc<dyn LLMProvider>,
-    executor: &ToolExecutor,
+    executor: &mut ToolExecutor,
     agent_spec: &AgentSpec,
     pending: PendingApproval,
     tool_result: ToolResult,
     handle: &SessionHandle,
     tool_filter: Option<&HashSet<String>>,
+    reload_deps: Option<&ReloadDeps>,
 ) -> Result<AgenticResult, AgenticError> {
     // Restore messages from pending state
     let mut messages = pending.messages;
@@ -344,6 +362,7 @@ pub async fn resume_agentic_loop(
         messages,
         handle,
         tool_filter,
+        reload_deps,
     )
     .await
 }
@@ -351,6 +370,42 @@ pub async fn resume_agentic_loop(
 // ============================================================================
 // Private Helpers
 // ============================================================================
+
+/// Rebuild the tool executor after `reload_tools` was invoked.
+///
+/// Re-creates explicit tools from config, discovers tools from directories,
+/// merges them (explicit wins), and replaces the executor's tool set.
+fn rebuild_executor(executor: &mut ToolExecutor, deps: &ReloadDeps) {
+    let tool_deps = crate::tools::ToolDependencies {
+        sandbox: deps.sandbox.clone(),
+        agent_dir: deps.agent_dir.clone(),
+        scheduler: None,
+        execution_context: None,
+        workspace_tools_dir: deps.workspace_tools_dir.clone(),
+    };
+    let explicit = create_tools(&deps.agent_tool_configs, &tool_deps);
+
+    let mut discovery_dirs = vec![deps.agent_dir.join(DEFAULT_TOOLS_DIR)];
+    if let Some(ref ws) = deps.workspace_tools_dir {
+        discovery_dirs.push(ws.clone());
+    }
+    let discovered = discover_all_tools(&discovery_dirs, &deps.sandbox);
+
+    // Merge: explicit wins on name collision
+    let explicit_names: HashSet<String> = explicit.iter().map(|t| t.name().to_string()).collect();
+    let mut merged = explicit;
+    for tool in discovered {
+        if !explicit_names.contains(tool.name()) {
+            merged.push(tool);
+        }
+    }
+
+    debug!(
+        tool_count = merged.len(),
+        "Rebuilt executor after reload_tools"
+    );
+    executor.replace_tools(merged);
+}
 
 /// Execute a single tool call and return the outcome.
 ///
