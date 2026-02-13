@@ -30,6 +30,8 @@ pub mod handlers;
 #[cfg(feature = "server")]
 pub mod memory;
 #[cfg(feature = "server")]
+pub mod process;
+#[cfg(feature = "server")]
 pub mod sandbox;
 #[cfg(feature = "server")]
 pub mod scheduler;

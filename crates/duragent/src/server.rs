@@ -14,6 +14,7 @@ use crate::agent::{AgentStore, PolicyLocks};
 use crate::background::BackgroundTasks;
 use crate::handlers;
 use crate::llm::ProviderRegistry;
+use crate::process::ProcessRegistryHandle;
 use crate::sandbox::Sandbox;
 use crate::scheduler::SchedulerHandle;
 use crate::session::{ChatSessionCache, SessionRegistry};
@@ -45,6 +46,7 @@ pub struct RuntimeServices {
 pub struct AppState {
     pub services: RuntimeServices,
     pub scheduler: Option<SchedulerHandle>,
+    pub process_registry: Option<ProcessRegistryHandle>,
     pub policy_locks: PolicyLocks,
     pub admin_token: Option<String>,
     pub api_token: Option<String>,

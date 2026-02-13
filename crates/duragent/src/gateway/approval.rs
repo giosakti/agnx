@@ -163,6 +163,9 @@ impl GatewayMessageHandler {
                 scheduler: self.scheduler.clone(),
                 execution_context,
                 workspace_tools_dir: Some(self.services.workspace_tools_path.clone()),
+                process_registry: self.process_registry.clone(),
+                session_id: Some(handle.id().to_string()),
+                agent_name: Some(handle.agent().to_string()),
             };
             let executor = build_executor(
                 &agent,
@@ -224,6 +227,9 @@ impl GatewayMessageHandler {
             scheduler: self.scheduler.clone(),
             execution_context,
             workspace_tools_dir: Some(self.services.workspace_tools_path.clone()),
+            process_registry: self.process_registry.clone(),
+            session_id: Some(handle.id().to_string()),
+            agent_name: Some(handle.agent().to_string()),
         };
         let mut executor = build_executor(
             &agent,
