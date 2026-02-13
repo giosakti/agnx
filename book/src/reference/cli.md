@@ -45,10 +45,11 @@ Start the Duragent server.
 duragent serve [flags]
 
 Flags:
-      --host string         Host to bind to (overrides config)
-  -p, --port int            HTTP port (overrides config)
-      --agents-dir string   Path to agents directory (overrides config)
-  -c, --config string       Path to config file (default duragent.yaml)
+      --host string           Host to bind to (overrides config)
+  -p, --port int              HTTP port (overrides config)
+      --agents-dir string     Path to agents directory (overrides config)
+  -c, --config string         Path to config file (default duragent.yaml)
+      --ephemeral <SECONDS>   Auto-shutdown after N seconds with no active sessions
 ```
 
 **Example:**
@@ -63,6 +64,14 @@ Stop a running server.
 
 ```bash
 duragent serve stop
+```
+
+### `duragent serve reload-agents`
+
+Reload agent configurations from disk without restarting the server.
+
+```bash
+duragent serve reload-agents
 ```
 
 ## Sessions
@@ -114,8 +123,5 @@ Within `duragent chat`, these commands are available:
 
 | Command | Description |
 |---------|-------------|
-| `/help` | Show available commands |
-| `/detach` or `Ctrl+D` | Detach from session |
 | `/quit` or `/exit` | End session |
-| `/clear` | Clear screen |
-| `/status` | Show session status |
+| `Ctrl+D` | Detach from session (EOF) |

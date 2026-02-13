@@ -137,6 +137,7 @@ Communication style rules:
 |-------|------|---------|-------------|
 | `on_disconnect` | string | `pause` | `continue` or `pause` |
 | `max_tool_iterations` | int | `10` | Max tool call iterations per request |
+| `llm_timeout_seconds` | int | `300` | Timeout for LLM requests in seconds |
 | `ttl_hours` | int | (global) | Per-agent session TTL override |
 | `compaction` | string | (global) | Per-agent compaction override |
 

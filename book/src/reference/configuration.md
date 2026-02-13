@@ -12,6 +12,46 @@ Configuration files support shell-style environment variable expansion:
 | `${VAR:-default}` | Optional — uses default if not set |
 | `${VAR:-}` | Optional — empty string if not set |
 
+## Environment Variables
+
+Duragent reads certain environment variables directly at startup, independent of config file interpolation.
+
+### LLM Provider Keys
+
+These are read directly from the environment — there is no YAML config equivalent.
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ANTHROPIC_API_KEY` | No | API key for Anthropic (Claude). Not needed if using OAuth login. |
+| `OPENAI_API_KEY` | No | API key for OpenAI-compatible providers |
+| `OPENROUTER_API_KEY` | No | API key for OpenRouter |
+
+At least one LLM provider must be configured for agents to function.
+
+### Tool Keys
+
+These are read directly from the environment — there is no YAML config equivalent.
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `BRAVE_API_KEY` | No | Brave Search API key. Enables the `web_search` built-in tool. |
+
+### Gateway Tokens
+
+Gateway tokens are handled differently depending on how you run the gateway:
+
+- **In-process** (compiled-in feature): the token comes from the `bot_token` field in `duragent.yaml`, which supports `${VAR}` interpolation.
+- **Standalone binary**: the token is read directly from the environment variable below.
+
+These are separate code paths — they do not conflict.
+
+| Variable | Binary | Description |
+|----------|--------|-------------|
+| `DISCORD_BOT_TOKEN` | `duragent-discord` | Discord bot token |
+| `TELEGRAM_BOT_TOKEN` | `duragent-telegram` | Telegram bot token |
+
+> **Tip:** When running gateways as external plugins (via `gateways.external[]`), you can forward these through the `env` field in `duragent.yaml` using `${VAR}` interpolation instead of relying on the host environment.
+
 ## duragent.yaml
 
 ### Full Example
@@ -28,6 +68,7 @@ server:
   idle_timeout_seconds: 60
   keep_alive_interval_seconds: 15
   admin_token: ${ADMIN_TOKEN:-}
+  api_token: ${API_TOKEN:-}
 
 # Agent directory (optional, defaults to {workspace}/agents)
 # agents_dir: .duragent/agents
@@ -57,7 +98,7 @@ gateways:
       command: /usr/local/bin/duragent-discord
       args: ["--verbose"]
       env:
-        DISCORD_TOKEN: ${DISCORD_TOKEN}
+        DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN}
       restart: on_failure
 
 # Routes
@@ -92,6 +133,8 @@ sandbox:
 | `server.idle_timeout_seconds` | u64 | `60` | SSE idle timeout |
 | `server.keep_alive_interval_seconds` | u64 | `15` | SSE keep-alive interval |
 | `server.admin_token` | string? | none | Admin API token |
+| `server.api_token` | string? | none | API token. If set, API endpoints require this token. If not set, only localhost requests are accepted. |
+| `server.max_connections` | usize | `1024` | Maximum concurrent connections |
 
 ### Workspace
 
@@ -113,8 +156,10 @@ sandbox:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `gateways.telegram.enabled` | bool | `true` | Enable Telegram gateway |
+| `gateways.telegram.enabled` | bool | `true` | Enable Telegram gateway (requires `gateway-telegram` feature) |
 | `gateways.telegram.bot_token` | string | required | Telegram bot token |
+| `gateways.discord.enabled` | bool | `true` | Enable Discord gateway (requires `gateway-discord` feature) |
+| `gateways.discord.bot_token` | string | required | Discord bot token |
 | `gateways.external[].name` | string | required | Gateway identifier |
 | `gateways.external[].command` | string | required | Path to gateway binary |
 | `gateways.external[].args` | array | `[]` | Command arguments |

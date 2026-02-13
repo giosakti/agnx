@@ -21,15 +21,26 @@ cargo install --git https://github.com/giosakti/duragent.git duragent-gateway-te
 ```yaml
 # duragent.yaml
 gateways:
-  telegram:
-    enabled: true
-    bot_token: ${TELEGRAM_BOT_TOKEN}
+  external:
+    - name: telegram
+      command: duragent-gateway-telegram
+      env:
+        TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      restart: on_failure
 
 routes:
   - match:
       gateway: telegram
     agent: my-assistant
 ```
+
+> **Note:** If you compiled Duragent with `--features gateway-telegram`, you can use the built-in config instead:
+> ```yaml
+> gateways:
+>   telegram:
+>     enabled: true
+>     bot_token: ${TELEGRAM_BOT_TOKEN}
+> ```
 
 ### 4. Start
 
@@ -74,7 +85,7 @@ gateways:
     - name: discord
       command: duragent-gateway-discord
       env:
-        DISCORD_TOKEN: ${DISCORD_TOKEN}
+        DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN}
       restart: on_failure
 
 routes:
@@ -83,10 +94,18 @@ routes:
     agent: my-assistant
 ```
 
+> **Note:** If you compiled Duragent with `--features gateway-discord`, you can use the built-in config instead:
+> ```yaml
+> gateways:
+>   discord:
+>     enabled: true
+>     bot_token: ${DISCORD_BOT_TOKEN}
+> ```
+
 ### 4. Start
 
 ```bash
-export DISCORD_TOKEN=your-token
+export DISCORD_BOT_TOKEN=your-token
 export OPENROUTER_API_KEY=your-key
 duragent serve
 ```
@@ -112,7 +131,7 @@ gateways:
     - name: discord
       command: duragent-gateway-discord
       env:
-        DISCORD_TOKEN: ${DISCORD_TOKEN}
+        DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN}
 
 routes:
   - match:

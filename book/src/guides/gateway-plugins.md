@@ -19,7 +19,7 @@ gateways:
       command: /usr/local/bin/duragent-discord
       args: ["--verbose"]
       env:
-        DISCORD_TOKEN: ${DISCORD_TOKEN}
+        DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN}
       restart: on_failure
 
     - name: custom-gateway
@@ -90,8 +90,13 @@ Custom gateways implement the Gateway Protocol — JSON Lines over stdin/stdout.
 |-------|---------|
 | `ready` | Gateway initialized |
 | `message_received` | Incoming user message |
+| `callback_query` | Inline keyboard button pressed |
 | `command_ok` | Command succeeded |
 | `command_error` | Command failed |
+| `pong` | Response to health check ping |
+| `error` | Gateway-level error |
+| `auth_required` | Authentication needed (e.g. QR code) |
+| `auth_success` | Authentication succeeded |
 | `shutdown` | Gateway terminating |
 
 **Commands (Duragent to gateway):**
@@ -99,8 +104,11 @@ Custom gateways implement the Gateway Protocol — JSON Lines over stdin/stdout.
 | Command | Purpose |
 |---------|---------|
 | `send_message` | Send text to a chat |
+| `send_media` | Send media (image, video, audio, document) |
 | `send_typing` | Show typing indicator |
 | `edit_message` | Edit a previously sent message |
+| `delete_message` | Delete a message |
+| `answer_callback_query` | Respond to inline keyboard button press |
 | `ping` | Health check |
 | `shutdown` | Graceful termination request |
 

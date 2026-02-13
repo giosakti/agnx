@@ -72,9 +72,9 @@ Return tasks as JSON:
 
 ### Naming Rules
 
-- Lowercase letters and hyphens only
+- Lowercase letters, digits, and hyphens only
 - Maximum 64 characters
-- Should match the directory name
+- Must match the directory name
 
 ## Configuring Skills
 
@@ -86,7 +86,7 @@ spec:
   skills_dir: ./skills/
 ```
 
-Duragent scans the directory for subdirectories containing `SKILL.md` files. Skill IDs are derived from the `name` field in the SKILL.md frontmatter, or the directory name if not specified.
+Duragent scans the directory for subdirectories containing `SKILL.md` files. The `name` field in the SKILL.md frontmatter is required and must match the directory name.
 
 ## Best Practices
 

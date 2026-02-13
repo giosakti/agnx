@@ -48,8 +48,8 @@ Plugins communicate with Duragent using JSON Lines over stdin/stdout:
 
 | Direction | Message Types |
 |-----------|--------------|
-| Duragent to plugin | `send_message`, `send_typing`, `edit_message`, `ping`, `shutdown` |
-| Plugin to Duragent | `ready`, `message_received`, `command_ok`, `command_error`, `shutdown` |
+| Duragent to plugin | `send_message`, `send_media`, `send_typing`, `edit_message`, `delete_message`, `answer_callback_query`, `ping`, `shutdown` |
+| Plugin to Duragent | `ready`, `message_received`, `callback_query`, `command_ok`, `command_error`, `pong`, `error`, `auth_required`, `auth_success`, `shutdown` |
 
 First-party plugins (Telegram, Discord) are written in Rust and ship as standalone binaries. Third-party plugins can use any language.
 

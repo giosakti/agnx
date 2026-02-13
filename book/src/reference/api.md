@@ -58,7 +58,7 @@ GET    /api/v1/sessions/{session_id}/messages # Get message history
 POST   /api/v1/sessions/{session_id}/messages # Send message
 POST   /api/v1/sessions/{session_id}/stream   # SSE stream
 
-POST   /api/v1/sessions/{session_id}/messages/{message_id}/approve  # Approve tool execution
+POST   /api/v1/sessions/{session_id}/approve                        # Approve tool execution
 ```
 
 ### Health
@@ -75,6 +75,7 @@ The Admin API requires authentication via `admin_token` in the server config.
 
 ```
 POST   /api/admin/v1/shutdown                 # Graceful server shutdown
+POST   /api/admin/v1/reload-agents            # Reload agent configurations from disk
 ```
 
 ## SSE Streaming
@@ -96,22 +97,46 @@ event: token
 data: {"content": "Hello"}
 ```
 
-**done** — Stream completed:
+**tool_call** — Tool invocation started:
 ```
-event: done
-data: {"usage": {"prompt_tokens": 10, "completion_tokens": 8, "total_tokens": 18}}
+event: tool_call
+data: {"call_id": "call_abc123", "name": "bash", "arguments": "{\"command\": \"ls\"}"}
 ```
 
-**error** — Error occurred:
+**tool_result** — Tool execution completed:
 ```
-event: error
-data: {"message": "LLM request failed: ..."}
+event: tool_result
+data: {"call_id": "call_abc123", "content": "file1.txt\nfile2.txt"}
 ```
 
 **approval_required** — Tool needs user approval:
 ```
 event: approval_required
 data: {"call_id": "call_abc123", "command": "npm install sqlite3"}
+```
+
+**done** — Stream completed:
+```
+event: done
+data: {"usage": {"prompt_tokens": 10, "completion_tokens": 8, "total_tokens": 18}}
+```
+
+**start** — Stream initialized:
+```
+event: start
+data: {}
+```
+
+**cancelled** — Stream was cancelled (e.g. client disconnected):
+```
+event: cancelled
+data: {}
+```
+
+**error** — Error occurred:
+```
+event: error
+data: {"message": "LLM request failed: ..."}
 ```
 
 ## Examples

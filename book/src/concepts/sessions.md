@@ -18,7 +18,7 @@ Sessions are the core durability primitive in Duragent. A session is a persisten
 | `active` | Running, client connected |
 | `running` | Running, client disconnected (continue mode) |
 | `paused` | Waiting for reconnect (pause mode) |
-| `ended` | Completed or explicitly ended |
+| `completed` | Completed or explicitly ended |
 
 ## Disconnect Behavior
 

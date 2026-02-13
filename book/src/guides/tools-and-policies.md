@@ -33,6 +33,8 @@ spec:
 | Name | Description |
 |------|-------------|
 | `bash` | Execute shell commands in sandbox |
+| `web_search` | Search the web (requires `BRAVE_API_KEY`) |
+| `web_fetch` | Fetch and convert a web page to Markdown |
 | `schedule_task` | Create a scheduled task |
 | `list_schedules` | List active schedules |
 | `cancel_schedule` | Cancel a schedule by ID |

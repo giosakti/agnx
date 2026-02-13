@@ -1,5 +1,10 @@
 # Installation
 
+## Requirements
+
+- Rust 1.85+ (stable toolchain)
+- Linux, macOS, or Windows
+
 ## From Source
 
 ```bash
@@ -15,10 +20,11 @@ make build
 cargo install --git https://github.com/giosakti/duragent.git
 ```
 
-## Requirements
+## Verify Installation
 
-- Rust 1.85+ (stable toolchain)
-- Linux, macOS, or Windows
+```bash
+duragent --version
+```
 
 ## Gateway Plugins
 
@@ -30,10 +36,4 @@ cargo install --git https://github.com/giosakti/duragent.git duragent-gateway-di
 
 # Telegram gateway
 cargo install --git https://github.com/giosakti/duragent.git duragent-gateway-telegram
-```
-
-## Verify Installation
-
-```bash
-duragent --version
 ```

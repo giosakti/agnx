@@ -41,6 +41,21 @@ Cancel an active schedule by its ID.
 | `message` | Send text directly (no LLM call) |
 | `task` | Execute with agent tools, summarize results |
 
+## Example Scenarios
+
+### One-Time Reminder
+
+1. User: "Remind me to review the PR in 2 hours"
+2. Agent calls `schedule_task` with `at: "2026-01-30T16:00:00Z"`
+3. Two hours later, user receives: "Reminder: review the PR"
+
+### Recurring Prompt
+
+1. User: "Send me a daily standup prompt at 9am on weekdays"
+2. Agent calls `schedule_task` with `cron: "0 9 * * MON-FRI"`
+3. Every weekday at 9am, user receives the prompt
+4. User replies, and the conversation continues naturally
+
 ## Session Continuity
 
 Scheduled messages inject into the active session for a `(chat_id, agent)` pair if one exists. If not, a new session is created. This means scheduled messages appear in the same conversation as user messages — enabling natural follow-up.
@@ -67,26 +82,15 @@ destination:
   gateway: telegram
   chat_id: "123456789"
 schedule:
-  at: "2026-01-30T16:00:00Z"    # one-shot
-  # or: cron: "0 9 * * MON-FRI" # recurring
+  at:                                    # one-shot
+    at: "2026-01-30T16:00:00Z"
+  # or:
+  # cron:                                # recurring
+  #   expr: "0 9 * * MON-FRI"
 payload:
-  message: "Reminder: review the PR"
+  message:
+    message: "Reminder: review the PR"
 ```
-
-## Example Scenarios
-
-### One-Time Reminder
-
-1. User: "Remind me to review the PR in 2 hours"
-2. Agent calls `schedule_task` with `at: "2026-01-30T16:00:00Z"`
-3. Two hours later, user receives: "Reminder: review the PR"
-
-### Recurring Prompt
-
-1. User: "Send me a daily standup prompt at 9am on weekdays"
-2. Agent calls `schedule_task` with `cron: "0 9 * * MON-FRI"`
-3. Every weekday at 9am, user receives the prompt
-4. User replies, and the conversation continues naturally
 
 ## Retry
 

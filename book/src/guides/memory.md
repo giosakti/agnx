@@ -72,8 +72,8 @@ Append an experience to today's daily log.
 
 Rewrite the agent's long-term memory.
 
-- **Parameters:** `content` (string, required)
-- **Behavior:** Atomic write to `memory/MEMORY.md`
+- **Parameters:** `content` (string, optional)
+- **Behavior:** When `content` is provided, atomic write to `memory/MEMORY.md`. When omitted, reads and returns the current `memory/MEMORY.md`.
 
 ### update_world
 
