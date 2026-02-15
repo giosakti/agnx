@@ -32,7 +32,7 @@ pub async fn test_app_state() -> AppState {
     let session_store = Arc::new(FileSessionStore::new(&sessions_path));
     let agents_dir = tmp.path().join("agents");
     let policy_store: Arc<dyn duragent::store::PolicyStore> =
-        Arc::new(FilePolicyStore::new(&agents_dir));
+        Arc::new(FilePolicyStore::new(&agents_dir, None));
     let (shutdown_tx, _shutdown_rx) = server::shutdown_channel();
     AppState {
         services: RuntimeServices {
@@ -58,6 +58,7 @@ pub async fn test_app_state() -> AppState {
         workspace_hash: "test".to_string(),
         chat_session_cache: ChatSessionCache::new(),
         agents_dir,
+        workspace_dir: None,
     }
 }
 
@@ -84,6 +85,6 @@ pub async fn empty_agent_store() -> AgentStore {
     let tmp = Box::leak(Box::new(tmp));
     let agents_dir = tmp.path().join("agents");
 
-    let catalog = FileAgentCatalog::new(&agents_dir);
+    let catalog = FileAgentCatalog::new(&agents_dir, None);
     AgentStore::from_catalog(&catalog).await.store
 }

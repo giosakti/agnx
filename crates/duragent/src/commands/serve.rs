@@ -75,7 +75,7 @@ pub async fn run(
     let workspace_tools_path = workspace.join(config::DEFAULT_TOOLS_DIR);
 
     // Load agents, providers, and policy store
-    let (store, providers, policy_store) = load_agents(&agents_dir).await;
+    let (store, providers, policy_store) = load_agents(&agents_dir, &workspace).await;
     info!(agents = store.len(), "Loaded agents");
 
     // Auto-create memory directive per agent that has memory enabled
@@ -261,6 +261,7 @@ pub async fn run(
         workspace_hash,
         chat_session_cache,
         agents_dir: agents_dir.clone(),
+        workspace_dir: Some(workspace.clone()),
     };
 
     // Spawn ephemeral idle monitor if requested
@@ -368,18 +369,20 @@ pub async fn reload_agents(config_path: &str, port_override: Option<u16>) -> Res
 /// Returns the agent store, provider registry, and policy store.
 async fn load_agents(
     agents_dir: &Path,
+    workspace_dir: &Path,
 ) -> (
     AgentStore,
     ProviderRegistry,
     Arc<dyn duragent::store::PolicyStore>,
 ) {
-    let catalog = FileAgentCatalog::new(agents_dir.to_path_buf());
+    let workspace = Some(workspace_dir.to_path_buf());
+    let catalog = FileAgentCatalog::new(agents_dir.to_path_buf(), workspace.clone());
     let scan = agent::AgentStore::from_catalog(&catalog).await;
     agent::log_scan_warnings(&scan.warnings);
 
     let providers = ProviderRegistry::from_env();
     let policy_store: Arc<dyn duragent::store::PolicyStore> =
-        Arc::new(FilePolicyStore::new(agents_dir.to_path_buf()));
+        Arc::new(FilePolicyStore::new(agents_dir.to_path_buf(), workspace));
 
     (scan.store, providers, policy_store)
 }

@@ -58,6 +58,7 @@ pub struct AppState {
     pub workspace_hash: String,
     pub chat_session_cache: ChatSessionCache,
     pub agents_dir: PathBuf,
+    pub workspace_dir: Option<PathBuf>,
 }
 
 // ============================================================================

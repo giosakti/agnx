@@ -49,7 +49,7 @@ pub async fn reload_agents(
         return (StatusCode::FORBIDDEN, "Admin access denied").into_response();
     }
 
-    let catalog = FileAgentCatalog::new(&state.agents_dir);
+    let catalog = FileAgentCatalog::new(&state.agents_dir, state.workspace_dir.clone());
     let report = AgentStore::from_catalog(&catalog).await;
     log_scan_warnings(&report.warnings);
 

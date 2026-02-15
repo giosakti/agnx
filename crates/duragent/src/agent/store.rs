@@ -216,7 +216,7 @@ spec:
     }
 
     async fn scan_agents(agents_dir: &Path) -> AgentScanReport {
-        let catalog = FileAgentCatalog::new(agents_dir);
+        let catalog = FileAgentCatalog::new(agents_dir, None);
         AgentStore::from_catalog(&catalog).await
     }
 

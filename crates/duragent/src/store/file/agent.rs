@@ -20,13 +20,18 @@ use crate::store::error::{StorageError, StorageResult};
 #[derive(Debug, Clone)]
 pub struct FileAgentCatalog {
     agents_dir: PathBuf,
+    workspace_dir: Option<PathBuf>,
 }
 
 impl FileAgentCatalog {
     /// Create a new file agent catalog.
-    pub fn new(agents_dir: impl Into<PathBuf>) -> Self {
+    ///
+    /// If `workspace_dir` is provided, workspace-level policy is included
+    /// in the 3-tier merge when loading agent policies.
+    pub fn new(agents_dir: impl Into<PathBuf>, workspace_dir: Option<PathBuf>) -> Self {
         Self {
             agents_dir: agents_dir.into(),
+            workspace_dir,
         }
     }
 }
@@ -45,7 +50,7 @@ impl AgentCatalog for FileAgentCatalog {
             return Ok(AgentScanResult { agents, warnings });
         }
 
-        let policy_store = FilePolicyStore::new(&self.agents_dir);
+        let policy_store = FilePolicyStore::new(&self.agents_dir, self.workspace_dir.clone());
 
         let mut entries = match fs::read_dir(&self.agents_dir).await {
             Ok(e) => e,
@@ -139,7 +144,7 @@ impl AgentCatalog for FileAgentCatalog {
         }
 
         // Load policy for this agent
-        let policy_store = FilePolicyStore::new(&self.agents_dir);
+        let policy_store = FilePolicyStore::new(&self.agents_dir, self.workspace_dir.clone());
         let policy = policy_store.load(name).await;
 
         let (agent, _warnings) = load_agent_from_dir(&agent_dir, name, policy)
@@ -333,7 +338,7 @@ spec:
         let agents_dir = temp_dir.path().join("agents");
         std::fs::create_dir(&agents_dir).unwrap();
 
-        let catalog = FileAgentCatalog::new(&agents_dir);
+        let catalog = FileAgentCatalog::new(&agents_dir, None);
         let result = catalog.load_all().await.unwrap();
 
         assert!(result.agents.is_empty());
@@ -345,7 +350,7 @@ spec:
         let temp_dir = TempDir::new().unwrap();
         let agents_dir = temp_dir.path().join("nonexistent");
 
-        let catalog = FileAgentCatalog::new(&agents_dir);
+        let catalog = FileAgentCatalog::new(&agents_dir, None);
         let result = catalog.load_all().await.unwrap();
 
         assert!(result.agents.is_empty());
@@ -367,7 +372,7 @@ spec:
             create_minimal_agent(&agent_dir, name);
         }
 
-        let catalog = FileAgentCatalog::new(&agents_dir);
+        let catalog = FileAgentCatalog::new(&agents_dir, None);
         let result = catalog.load_all().await.unwrap();
 
         assert_eq!(result.agents.len(), 3);
@@ -390,7 +395,7 @@ spec:
         std::fs::create_dir(&invalid_dir).unwrap();
         std::fs::write(invalid_dir.join("agent.yaml"), "not: valid: yaml::").unwrap();
 
-        let catalog = FileAgentCatalog::new(&agents_dir);
+        let catalog = FileAgentCatalog::new(&agents_dir, None);
         let result = catalog.load_all().await.unwrap();
 
         assert_eq!(result.agents.len(), 1);
@@ -413,7 +418,7 @@ spec:
         std::fs::create_dir(&agent_dir).unwrap();
         create_minimal_agent(&agent_dir, "test-agent");
 
-        let catalog = FileAgentCatalog::new(&agents_dir);
+        let catalog = FileAgentCatalog::new(&agents_dir, None);
         let agent = catalog.load("test-agent").await.unwrap();
 
         assert_eq!(agent.metadata.name, "test-agent");
@@ -427,7 +432,7 @@ spec:
         let agents_dir = temp_dir.path().join("agents");
         std::fs::create_dir(&agents_dir).unwrap();
 
-        let catalog = FileAgentCatalog::new(&agents_dir);
+        let catalog = FileAgentCatalog::new(&agents_dir, None);
         let result = catalog.load("nonexistent").await;
 
         assert!(matches!(result, Err(StorageError::NotFound { .. })));
@@ -461,7 +466,7 @@ spec:
             "---\nname: task-extraction\ndescription: Extract tasks\nallowed-tools: bash\n---\n\nBody.",
         );
 
-        let catalog = FileAgentCatalog::new(&agents_dir);
+        let catalog = FileAgentCatalog::new(&agents_dir, None);
         let agent = catalog.load("test-agent").await.unwrap();
 
         assert_eq!(agent.skills.len(), 1);
@@ -481,7 +486,7 @@ spec:
         create_minimal_agent(&agent_dir, "test-agent");
 
         // No skills/ directory at all
-        let catalog = FileAgentCatalog::new(&agents_dir);
+        let catalog = FileAgentCatalog::new(&agents_dir, None);
         let agent = catalog.load("test-agent").await.unwrap();
 
         assert!(agent.skills.is_empty());
@@ -502,7 +507,7 @@ spec:
         // Invalid skill: missing description
         create_skill(&skills_dir, "bad-skill", "---\nname: bad-skill\n---\n");
 
-        let catalog = FileAgentCatalog::new(&agents_dir);
+        let catalog = FileAgentCatalog::new(&agents_dir, None);
         let result = catalog.load_all().await.unwrap();
 
         // Agent still loads
@@ -545,7 +550,7 @@ spec:
             "---\nname: my-skill\ndescription: Custom dir skill\n---\n",
         );
 
-        let catalog = FileAgentCatalog::new(&agents_dir);
+        let catalog = FileAgentCatalog::new(&agents_dir, None);
         let agent = catalog.load("test-agent").await.unwrap();
 
         assert_eq!(agent.skills.len(), 1);
