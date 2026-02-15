@@ -279,13 +279,17 @@ fn convert_tools(tools: Option<&Vec<ToolDefinition>>, oauth: bool) -> Option<Vec
 const ANTHROPIC_IDENTITY: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
 
 fn to_request(request: &ChatRequest, stream: Option<bool>, oauth: bool) -> Request {
-    let mut system_text: Option<String> = None;
+    let mut system_parts: Vec<String> = Vec::new();
     let mut messages = Vec::new();
 
     for msg in &request.messages {
         match msg.role {
             Role::System => {
-                system_text = msg.content.clone();
+                if let Some(content) = msg.content.as_ref()
+                    && !content.is_empty()
+                {
+                    system_parts.push(content.clone());
+                }
             }
             Role::User => {
                 let content = msg.content.clone().unwrap_or_default();
@@ -308,8 +312,10 @@ fn to_request(request: &ChatRequest, stream: Option<bool>, oauth: bool) -> Reque
                     }
                     // Add tool use blocks
                     for tc in tool_calls {
-                        let input: serde_json::Value = serde_json::from_str(&tc.function.arguments)
-                            .unwrap_or_else(|e| {
+                        let input: serde_json::Value = if tc.function.arguments.trim().is_empty() {
+                            serde_json::Value::Object(Default::default())
+                        } else {
+                            serde_json::from_str(&tc.function.arguments).unwrap_or_else(|e| {
                                 tracing::warn!(
                                     tool_call_id = %tc.id,
                                     tool_name = %tc.function.name,
@@ -317,7 +323,8 @@ fn to_request(request: &ChatRequest, stream: Option<bool>, oauth: bool) -> Reque
                                     "Failed to parse tool call arguments, using empty object"
                                 );
                                 serde_json::Value::Object(Default::default())
-                            });
+                            })
+                        };
                         blocks.push(ContentBlock::ToolUse {
                             id: tc.id.clone(),
                             name: tc.function.name.clone(),
@@ -352,6 +359,13 @@ fn to_request(request: &ChatRequest, stream: Option<bool>, oauth: bool) -> Reque
         }
     }
 
+    // Merge consecutive messages with the same role.
+    // The Anthropic API requires strict role alternation. Event replay can
+    // produce adjacent messages of the same role (e.g. tool_call + partial
+    // content recorded as separate assistant events, or user text arriving
+    // between a tool_use and its tool_result).
+    merge_consecutive_messages(&mut messages);
+
     // Build system prompt: array format for OAuth, string for API key
     let system = if oauth {
         let cache_control = serde_json::json!({"type": "ephemeral"});
@@ -360,9 +374,7 @@ fn to_request(request: &ChatRequest, stream: Option<bool>, oauth: bool) -> Reque
             "text": ANTHROPIC_IDENTITY,
             "cache_control": cache_control,
         })];
-        if let Some(text) = system_text
-            && !text.is_empty()
-        {
+        for text in system_parts {
             blocks.push(serde_json::json!({
                 "type": "text",
                 "text": text,
@@ -370,8 +382,10 @@ fn to_request(request: &ChatRequest, stream: Option<bool>, oauth: bool) -> Reque
             }));
         }
         Some(serde_json::Value::Array(blocks))
+    } else if system_parts.is_empty() {
+        None
     } else {
-        system_text.map(serde_json::Value::String)
+        Some(serde_json::Value::String(system_parts.join("\n\n")))
     };
 
     Request {
@@ -382,6 +396,87 @@ fn to_request(request: &ChatRequest, stream: Option<bool>, oauth: bool) -> Reque
         temperature: request.temperature,
         tools: convert_tools(request.tools.as_ref(), oauth),
         stream,
+    }
+}
+
+/// Merge consecutive messages with the same role into single messages.
+///
+/// The Anthropic API requires strict user/assistant alternation. Event replay
+/// can produce adjacent messages of the same role that must be combined.
+fn merge_consecutive_messages(messages: &mut Vec<RequestMessage>) {
+    if messages.len() < 2 {
+        return;
+    }
+
+    let mut merged: Vec<RequestMessage> = Vec::with_capacity(messages.len());
+
+    for msg in messages.drain(..) {
+        if let Some(last) = merged.last_mut()
+            && message_role(last) == message_role(&msg)
+        {
+            let insert_separator = is_plain_text_message(last) && is_plain_text_message(&msg);
+            merge_into(last, msg, insert_separator);
+        } else {
+            merged.push(msg);
+        }
+    }
+
+    *messages = merged;
+}
+
+fn message_role(msg: &RequestMessage) -> &str {
+    match msg {
+        RequestMessage::Text { role, .. } | RequestMessage::ContentBlocks { role, .. } => role,
+    }
+}
+
+fn is_plain_text_message(msg: &RequestMessage) -> bool {
+    match msg {
+        RequestMessage::Text { content, .. } => !content.is_empty(),
+        RequestMessage::ContentBlocks { .. } => false,
+    }
+}
+
+/// Merge `source` into `target` (both same role). Converts Text to ContentBlocks as needed.
+fn merge_into(target: &mut RequestMessage, source: RequestMessage, insert_separator: bool) {
+    // Convert target to ContentBlocks if it's currently Text
+    let target_blocks = match target {
+        RequestMessage::ContentBlocks { content, .. } => content,
+        RequestMessage::Text { role, content } => {
+            let blocks = if content.is_empty() {
+                vec![]
+            } else {
+                vec![ContentBlock::Text {
+                    text: std::mem::take(content),
+                }]
+            };
+            let role_val = std::mem::take(role);
+            *target = RequestMessage::ContentBlocks {
+                role: role_val,
+                content: blocks,
+            };
+            match target {
+                RequestMessage::ContentBlocks { content, .. } => content,
+                _ => unreachable!(),
+            }
+        }
+    };
+
+    // Extract blocks from source
+    match source {
+        RequestMessage::Text { content, .. } => {
+            if !content.is_empty() {
+                if insert_separator && !target_blocks.is_empty() {
+                    target_blocks.push(ContentBlock::Text {
+                        text: "\n\n".to_string(),
+                    });
+                }
+                target_blocks.push(ContentBlock::Text { text: content });
+            }
+        }
+        RequestMessage::ContentBlocks { content, .. } => {
+            target_blocks.extend(content);
+        }
     }
 }
 
@@ -673,4 +768,123 @@ struct Delta {
 #[derive(serde::Deserialize)]
 struct StreamUsage {
     output_tokens: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text_msg(role: &str, content: &str) -> RequestMessage {
+        RequestMessage::Text {
+            role: role.to_string(),
+            content: content.to_string(),
+        }
+    }
+
+    fn tool_use_msg(role: &str, id: &str, name: &str) -> RequestMessage {
+        RequestMessage::ContentBlocks {
+            role: role.to_string(),
+            content: vec![ContentBlock::ToolUse {
+                id: id.to_string(),
+                name: name.to_string(),
+                input: serde_json::json!({}),
+            }],
+        }
+    }
+
+    fn tool_result_msg(tool_use_id: &str, content: &str) -> RequestMessage {
+        RequestMessage::ContentBlocks {
+            role: "user".to_string(),
+            content: vec![ContentBlock::ToolResult {
+                tool_use_id: tool_use_id.to_string(),
+                content: content.to_string(),
+            }],
+        }
+    }
+
+    #[test]
+    fn merge_no_op_for_alternating() {
+        let mut msgs = vec![
+            text_msg("user", "hello"),
+            text_msg("assistant", "hi"),
+            text_msg("user", "bye"),
+        ];
+        merge_consecutive_messages(&mut msgs);
+        assert_eq!(msgs.len(), 3);
+    }
+
+    #[test]
+    fn merge_consecutive_assistant_tool_use_and_text() {
+        // Simulates approval flow: tool_call recorded, then partial content
+        let mut msgs = vec![
+            text_msg("user", "do it"),
+            tool_use_msg("assistant", "tc1", "bash"),
+            text_msg("assistant", "Running command..."),
+            tool_result_msg("tc1", "done"),
+        ];
+        merge_consecutive_messages(&mut msgs);
+        assert_eq!(msgs.len(), 3);
+
+        // The merged assistant message should be ContentBlocks
+        let serialized = serde_json::to_value(&msgs[1]).unwrap();
+        let content = serialized["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2); // tool_use + text
+        assert_eq!(content[0]["type"], "tool_use");
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[1]["text"], "Running command...");
+    }
+
+    #[test]
+    fn merge_consecutive_user_text_and_tool_result() {
+        // Simulates: user message arrived, then tool_result for prior tool_use
+        let mut msgs = vec![
+            tool_use_msg("assistant", "tc1", "bash"),
+            text_msg("user", "process completed"),
+            tool_result_msg("tc1", "done"),
+        ];
+        merge_consecutive_messages(&mut msgs);
+        assert_eq!(msgs.len(), 2);
+
+        let serialized = serde_json::to_value(&msgs[1]).unwrap();
+        let content = serialized["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2); // text + tool_result
+    }
+
+    #[test]
+    fn merge_multiple_user_messages() {
+        let mut msgs = vec![
+            text_msg("assistant", "done"),
+            text_msg("user", "msg1"),
+            text_msg("user", "msg2"),
+            text_msg("user", "msg3"),
+        ];
+        merge_consecutive_messages(&mut msgs);
+        assert_eq!(msgs.len(), 2);
+
+        let serialized = serde_json::to_value(&msgs[1]).unwrap();
+        let content = serialized["content"].as_array().unwrap();
+        let texts: Vec<&str> = content
+            .iter()
+            .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+            .filter(|t| !t.is_empty() && *t != "\n\n")
+            .collect();
+        assert_eq!(texts, vec!["msg1", "msg2", "msg3"]);
+    }
+
+    #[test]
+    fn merge_empty_text_skipped() {
+        let mut msgs = vec![
+            text_msg("user", "hello"),
+            text_msg("assistant", ""),
+            text_msg("assistant", "real answer"),
+        ];
+        merge_consecutive_messages(&mut msgs);
+        assert_eq!(msgs.len(), 2);
+
+        let serialized = serde_json::to_value(&msgs[1]).unwrap();
+        let content = serialized["content"].as_array().unwrap();
+        // Empty text is skipped, only "real answer" remains
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["text"], "real answer");
+    }
 }
