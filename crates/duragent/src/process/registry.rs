@@ -9,13 +9,14 @@ use std::time::Duration;
 
 use chrono::Utc;
 use dashmap::DashMap;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
+use crate::api::SessionStatus;
 use crate::context::{ContextBuilder, TokenBudget, load_all_directives};
-use crate::gateway::GatewaySender;
+use crate::gateway::{GatewaySender, build_approval_keyboard};
 use crate::server::RuntimeServices;
-use crate::session::{AgenticResult, run_agentic_loop};
+use crate::session::{AgenticResult, SteeringMessage, run_agentic_loop};
 use crate::tools::{ReloadDeps, ToolDependencies, build_executor};
 
 use super::monitor;
@@ -78,10 +79,15 @@ impl ProcessRegistryHandle {
         processes_dir: PathBuf,
         services: RuntimeServices,
         gateway_sender: GatewaySender,
+        scheduler: Option<crate::scheduler::SchedulerHandle>,
     ) -> Self {
         tokio::fs::create_dir_all(&processes_dir)
             .await
             .unwrap_or_else(|e| warn!(error = %e, "Failed to create processes dir"));
+
+        // Canonicalize so log paths are absolute — tmux sessions run in a
+        // different cwd, so relative paths would resolve to the wrong place.
+        let processes_dir = processes_dir.canonicalize().unwrap_or(processes_dir);
 
         let tmux_available = tmux::detect_tmux().await;
         if tmux_available {
@@ -97,6 +103,7 @@ impl ProcessRegistryHandle {
             services,
             gateway_sender,
             stdin_locks: crate::sync::KeyedLocks::new(),
+            scheduler,
         }
     }
 
@@ -142,9 +149,15 @@ impl ProcessRegistryHandle {
 
         if use_tmux {
             // Spawn via tmux
-            tmux::create_session(&tmux_session_name, command, &log_path, workdir)
-                .await
-                .map_err(|e| ProcessError::SpawnFailed(e.to_string()))?;
+            tmux::create_session(
+                &tmux_session_name,
+                command,
+                &log_path,
+                workdir,
+                cfg.interactive,
+            )
+            .await
+            .map_err(|e| ProcessError::SpawnFailed(e.to_string()))?;
 
             self.persist_meta(&meta).await;
 
@@ -153,6 +166,7 @@ impl ProcessRegistryHandle {
                     meta: meta.clone(),
                     cancel_tx: None,
                     stdin: None,
+                    watcher_cancel_tx: None,
                 };
                 self.entries.insert(handle_id.clone(), entry);
 
@@ -167,6 +181,7 @@ impl ProcessRegistryHandle {
                 meta: meta.clone(),
                 cancel_tx: Some(cancel_tx),
                 stdin: None,
+                watcher_cancel_tx: None,
             };
             self.entries.insert(handle_id.clone(), entry);
 
@@ -233,6 +248,7 @@ impl ProcessRegistryHandle {
                     meta: meta.clone(),
                     cancel_tx: None,
                     stdin,
+                    watcher_cancel_tx: None,
                 };
                 self.entries.insert(handle_id.clone(), entry);
 
@@ -249,6 +265,7 @@ impl ProcessRegistryHandle {
                 meta: meta.clone(),
                 cancel_tx: Some(cancel_tx),
                 stdin,
+                watcher_cancel_tx: None,
             };
             self.entries.insert(handle_id.clone(), entry);
 
@@ -381,13 +398,48 @@ impl ProcessRegistryHandle {
             .map_err(ProcessError::Io)
     }
 
-    /// Write to process stdin (non-interactive processes).
-    pub async fn write_stdin(
+    /// Write text to a process.
+    ///
+    /// For tmux processes: uses `send_literal` to type the text into the pane
+    /// (preserves spaces, sends Enter if the input ends with newline).
+    /// For non-tmux processes: writes directly to stdin.
+    pub async fn write_input(
         &self,
         handle_id: &str,
         session_id: &str,
         input: &str,
     ) -> Result<(), ProcessError> {
+        let entry = self
+            .entries
+            .get(handle_id)
+            .ok_or_else(|| ProcessError::NotFound(handle_id.to_string()))?;
+        if entry.meta.session_id != session_id {
+            return Err(ProcessError::WrongSession);
+        }
+        if entry.meta.status.is_terminal() {
+            return Err(ProcessError::NotRunning);
+        }
+        let is_tmux = entry.meta.tmux_session.clone();
+        drop(entry);
+
+        // Interpret escape sequences so LLM-generated \n works as documented
+        let input = input.replace("\\n", "\n");
+
+        if let Some(tmux_session) = is_tmux {
+            // For tmux processes, type the text literally.
+            // Enter is only pressed when the input explicitly ends with '\n'.
+            let press_enter = input.ends_with('\n');
+            let text = input.trim_end_matches('\n');
+            tmux::send_literal(&tmux_session, text, press_enter)
+                .await
+                .map_err(ProcessError::Io)
+        } else {
+            self.write_stdin_inner(handle_id, &input).await
+        }
+    }
+
+    /// Write directly to a non-tmux process's stdin pipe.
+    async fn write_stdin_inner(&self, handle_id: &str, input: &str) -> Result<(), ProcessError> {
         // Serialize concurrent writes to the same process stdin
         let lock = self.stdin_locks.get(handle_id);
         let _guard = lock.lock().await;
@@ -398,9 +450,6 @@ impl ProcessRegistryHandle {
                 .entries
                 .get_mut(handle_id)
                 .ok_or_else(|| ProcessError::NotFound(handle_id.to_string()))?;
-            if entry.meta.session_id != session_id {
-                return Err(ProcessError::WrongSession);
-            }
             if entry.meta.status.is_terminal() {
                 return Err(ProcessError::NotRunning);
             }
@@ -433,8 +482,8 @@ impl ProcessRegistryHandle {
     /// signal. The monitor's `cancel_rx` branch will call `mark_killed`, but
     /// `update_status` will no-op because the status is already terminal.
     pub async fn kill(&self, handle_id: &str, session_id: &str) -> Result<(), ProcessError> {
-        // Atomically validate and take cancel_tx in a single get_mut block
-        let cancel_tx = {
+        // Atomically validate and take cancel senders in a single get_mut block
+        let (cancel_tx, watcher_tx) = {
             let mut entry = self
                 .entries
                 .get_mut(handle_id)
@@ -447,12 +496,15 @@ impl ProcessRegistryHandle {
             }
             entry.meta.status = ProcessStatus::Killed;
             entry.meta.completed_at = Some(Utc::now());
-            entry.cancel_tx.take()
+            (entry.cancel_tx.take(), entry.watcher_cancel_tx.take())
             // DashMap RefMut dropped here
         };
 
-        // Send cancel signal outside the lock
+        // Send cancel signals outside the lock
         if let Some(tx) = cancel_tx {
+            let _ = tx.send(());
+        }
+        if let Some(tx) = watcher_tx {
             let _ = tx.send(());
         }
 
@@ -504,6 +556,7 @@ impl ProcessRegistryHandle {
                                         meta: meta.clone(),
                                         cancel_tx: Some(cancel_tx),
                                         stdin: None,
+                                        watcher_cancel_tx: None,
                                     };
                                     self.entries.insert(meta.handle.clone(), entry);
 
@@ -533,6 +586,7 @@ impl ProcessRegistryHandle {
                                     meta: meta.clone(),
                                     cancel_tx: None,
                                     stdin: None,
+                                    watcher_cancel_tx: None,
                                 };
                                 self.entries.insert(meta.handle.clone(), entry);
                                 lost += 1;
@@ -545,6 +599,7 @@ impl ProcessRegistryHandle {
                                     meta: meta.clone(),
                                     cancel_tx: None,
                                     stdin: None,
+                                    watcher_cancel_tx: None,
                                 };
                                 self.entries.insert(meta.handle.clone(), entry);
                             }
@@ -649,6 +704,13 @@ impl ProcessRegistryHandle {
             None => return,
         };
 
+        // Auto-cancel any schedules linked to this process
+        if let Some(ref scheduler) = self.scheduler {
+            scheduler
+                .cancel_by_process_handle(handle_id, &meta.agent)
+                .await;
+        }
+
         // Only fire callback for async processes (not wait:true)
         // Check if we have gateway info to respond to
         let (gateway, chat_id) = match (&meta.gateway, &meta.chat_id) {
@@ -702,7 +764,7 @@ impl ProcessRegistryHandle {
         );
 
         if let Err(e) = self
-            .run_callback(&meta, &gateway, &chat_id, &completion_message)
+            .run_callback(&meta, &gateway, &chat_id, &completion_message, None)
             .await
         {
             error!(
@@ -735,6 +797,136 @@ impl ProcessRegistryHandle {
             Err(e) => {
                 error!(error = %e, "Failed to serialize process meta");
             }
+        }
+    }
+
+    // ========================================================================
+    // Screen watcher management
+    // ========================================================================
+
+    /// Start a stream-based screen watcher for an interactive tmux process.
+    ///
+    /// Monitors the process log for output flow. Fires a callback when
+    /// output has been silent for `silence_timeout_secs` seconds.
+    pub fn start_watcher(
+        &self,
+        handle_id: &str,
+        session_id: &str,
+        silence_timeout_secs: u64,
+    ) -> Result<(), ProcessError> {
+        let mut entry = self
+            .entries
+            .get_mut(handle_id)
+            .ok_or_else(|| ProcessError::NotFound(handle_id.to_string()))?;
+
+        if entry.meta.session_id != session_id {
+            return Err(ProcessError::WrongSession);
+        }
+        if entry.meta.status.is_terminal() {
+            return Err(ProcessError::NotRunning);
+        }
+        let _tmux_session = entry
+            .meta
+            .tmux_session
+            .clone()
+            .ok_or(ProcessError::NotTmuxProcess)?;
+        let log_path = entry.meta.log_path.clone();
+
+        // Stop existing watcher if any
+        if let Some(tx) = entry.watcher_cancel_tx.take() {
+            let _ = tx.send(());
+        }
+
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+        entry.watcher_cancel_tx = Some(cancel_tx);
+
+        // Drop entry ref before spawning (releases DashMap lock)
+        drop(entry);
+
+        super::watcher::spawn_screen_watcher(
+            handle_id.to_string(),
+            std::time::Duration::from_secs(2), // poll file size every 2s
+            std::time::Duration::from_secs(silence_timeout_secs),
+            self.clone(),
+            cancel_rx,
+            log_path,
+        );
+
+        Ok(())
+    }
+
+    /// Stop the screen watcher for a process.
+    pub fn stop_watcher(&self, handle_id: &str, session_id: &str) -> Result<(), ProcessError> {
+        let mut entry = self
+            .entries
+            .get_mut(handle_id)
+            .ok_or_else(|| ProcessError::NotFound(handle_id.to_string()))?;
+
+        if entry.meta.session_id != session_id {
+            return Err(ProcessError::WrongSession);
+        }
+
+        if let Some(tx) = entry.watcher_cancel_tx.take() {
+            let _ = tx.send(());
+        }
+
+        Ok(())
+    }
+
+    /// Fire a screen-halted callback for a process.
+    ///
+    /// Called by the screen watcher when it detects the screen has stabilized.
+    /// Tries to steer the message into a running agentic loop first. If no loop
+    /// is running, acquires the lock and runs its own agentic loop.
+    pub async fn fire_screen_halted_callback(&self, handle_id: &str) {
+        let meta = match self.entries.get(handle_id) {
+            Some(entry) => entry.meta.clone(),
+            None => return,
+        };
+
+        let (gateway, chat_id) = match (&meta.gateway, &meta.chat_id) {
+            (Some(gw), Some(cid)) => (gw.clone(), cid.clone()),
+            _ => {
+                debug!(handle = %handle_id, "No gateway/chat_id for screen callback, skipping");
+                return;
+            }
+        };
+
+        let message = format!(
+            "[Process {} screen halted]\n\n\
+             The interactive process screen has stopped changing. \
+             Use background_process capture to check if it needs input.",
+            handle_id,
+        );
+
+        // Try to steer into a running agentic loop first
+        if let Some(tx) = self.services.steering_channels.get(&meta.session_id) {
+            // Persist the message for durability
+            let mut persisted = false;
+            if let Some(handle) = self.services.session_registry.get(&meta.session_id)
+                && handle.add_user_message(message.clone()).await.is_ok()
+            {
+                persisted = true;
+            }
+            let _ = tx.send(SteeringMessage {
+                content: message,
+                sender_id: None,
+                sender_label: None,
+                persisted,
+            });
+            return;
+        }
+
+        // No running loop — run our own
+        if let Err(e) = self
+            .run_callback(&meta, &gateway, &chat_id, &message, Some(self.clone()))
+            .await
+        {
+            error!(
+                handle = %handle_id,
+                error = %e,
+                "Failed to fire screen halted callback"
+            );
         }
     }
 
@@ -866,13 +1058,18 @@ impl ProcessRegistryHandle {
         }
     }
 
-    /// Run the agentic loop for a completion callback.
+    /// Run the agentic loop for a process callback.
+    ///
+    /// When `process_registry` is `Some`, the agent will have access to
+    /// process tools (needed for screen-halted callbacks where the agent
+    /// must interact with the process). Completion callbacks pass `None`.
     async fn run_callback(
         &self,
         meta: &ProcessMeta,
         gateway: &str,
         chat_id: &str,
         message: &str,
+        process_registry: Option<ProcessRegistryHandle>,
     ) -> anyhow::Result<()> {
         // Get agent
         let agent = self
@@ -896,10 +1093,16 @@ impl ProcessRegistryHandle {
             .get(&meta.session_id)
             .ok_or_else(|| anyhow::anyhow!("Session not found: {}", meta.session_id))?;
 
-        // Persist the completion message
+        // Persist the callback message
         handle.add_user_message(message.to_string()).await?;
 
-        // Build tool executor
+        // Acquire per-session agentic loop lock (blocks until available).
+        // We acquire BEFORE building context so we always have fresh state —
+        // if another loop was running, we'll see its events in our context.
+        let loop_lock = self.services.agentic_loop_locks.get(&meta.session_id);
+        let _loop_guard = loop_lock.lock().await;
+
+        // Build tool executor (after lock to pick up latest policy)
         let policy = self.services.policy_store.load(&meta.agent).await;
         let deps = ToolDependencies {
             sandbox: self.services.sandbox.clone(),
@@ -907,9 +1110,10 @@ impl ProcessRegistryHandle {
             scheduler: None,
             execution_context: None,
             workspace_tools_dir: Some(self.services.workspace_tools_path.clone()),
-            process_registry: None, // Don't allow nested process spawning from callbacks
+            process_registry,
             session_id: Some(meta.session_id.clone()),
             agent_name: Some(meta.agent.clone()),
+            session_registry: Some(self.services.session_registry.clone()),
         };
         let mut executor = build_executor(
             &agent,
@@ -926,7 +1130,13 @@ impl ProcessRegistryHandle {
             agent_tool_configs: agent.tools.clone(),
         });
 
-        // Build messages
+        // Create steering channel so user messages can be injected mid-loop
+        let (steering_tx, steering_rx) = mpsc::unbounded_channel();
+        self.services
+            .steering_channels
+            .insert(meta.session_id.clone(), steering_tx);
+
+        // Build messages (after lock — always reflects latest state)
         let history = handle.get_messages().await.unwrap_or_default();
         let directives =
             load_all_directives(&self.services.workspace_directives_path, &agent.agent_dir);
@@ -950,27 +1160,80 @@ impl ProcessRegistryHandle {
             .messages;
 
         // Run agentic loop
-        let result =
-            run_agentic_loop(provider, &mut executor, &agent, messages, &handle, None).await?;
+        let result = run_agentic_loop(
+            provider,
+            &mut executor,
+            &agent,
+            messages,
+            &handle,
+            None,
+            Some(steering_rx),
+        )
+        .await;
 
-        let response = match result {
+        self.services.steering_channels.remove(&meta.session_id);
+
+        let result = result?;
+
+        match result {
             AgenticResult::Complete { content, usage, .. } => {
-                let _ = handle.add_assistant_message(content.clone(), usage).await;
-                content
-            }
-            AgenticResult::AwaitingApproval { pending, .. } => {
-                format!(
-                    "Background process completed but requires approval for: `{}`",
-                    pending.command
-                )
-            }
-        };
+                if !content.trim().is_empty() {
+                    let _ = handle.add_assistant_message(content.clone(), usage).await;
+                }
 
-        // Send response via gateway
-        self.gateway_sender
-            .send_message(gateway, chat_id, &response, None)
-            .await
-            .map_err(|e| anyhow::anyhow!("Gateway send failed: {}", e))?;
+                // Send response via gateway (skip empty)
+                let trimmed = content.trim();
+                if !trimmed.is_empty() {
+                    self.gateway_sender
+                        .send_message(gateway, chat_id, trimmed, None)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Gateway send failed: {}", e))?;
+                }
+            }
+            AgenticResult::AwaitingApproval {
+                pending,
+                partial_content,
+                ..
+            } => {
+                // Persist pending approval and pause the session so it can be resumed
+                if let Err(e) = handle.set_pending_approval(pending.clone()).await {
+                    warn!(error = %e, "Failed to persist pending approval");
+                }
+                if let Err(e) = handle.set_status(SessionStatus::Paused).await {
+                    warn!(error = %e, "Failed to set session status to Paused");
+                }
+
+                // Send any partial content before the tool call
+                let trimmed = partial_content.trim();
+                if !trimmed.is_empty()
+                    && let Err(e) = self
+                        .gateway_sender
+                        .send_message(gateway, chat_id, trimmed, None)
+                        .await
+                {
+                    warn!(error = %e, "Failed to send partial content");
+                }
+
+                // Send approval keyboard to let the user approve/deny
+                let keyboard = build_approval_keyboard();
+                let approval_msg =
+                    format!("Command requires approval:\n```\n{}\n```", pending.command);
+
+                if let Err(e) = self
+                    .gateway_sender
+                    .send_message_with_keyboard(
+                        gateway,
+                        chat_id,
+                        &approval_msg,
+                        None,
+                        Some(keyboard),
+                    )
+                    .await
+                {
+                    warn!(error = %e, "Failed to send approval keyboard");
+                }
+            }
+        }
 
         Ok(())
     }

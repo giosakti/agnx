@@ -36,6 +36,10 @@ pub struct Schedule {
     /// Optional retry configuration for transient failures.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry: Option<RetryConfig>,
+    /// Optional linked process handle. When set, the schedule is auto-cancelled
+    /// when the linked process exits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_handle: Option<String>,
 }
 
 impl Schedule {
@@ -275,6 +279,7 @@ mod tests {
             created_at: Utc::now(),
             status: ScheduleStatus::Active,
             retry: None,
+            process_handle: None,
         };
         assert!(schedule.is_one_shot());
         assert!(!schedule.is_recurring());
@@ -300,6 +305,7 @@ mod tests {
             created_at: Utc::now(),
             status: ScheduleStatus::Active,
             retry: None,
+            process_handle: None,
         };
         assert!(schedule.is_recurring());
         assert!(!schedule.is_one_shot());
@@ -325,6 +331,7 @@ mod tests {
             created_at: Utc::now(),
             status: ScheduleStatus::Active,
             retry: None,
+            process_handle: None,
         };
         assert!(schedule.is_recurring());
         assert!(!schedule.is_one_shot());
@@ -488,6 +495,7 @@ mod tests {
             created_at: Utc::now(),
             status: ScheduleStatus::Active,
             retry: Some(RetryConfig::default()),
+            process_handle: None,
         };
 
         let yaml = serde_saphyr::to_string(&schedule).unwrap();
@@ -512,9 +520,88 @@ mod tests {
             created_at: Utc::now(),
             status: ScheduleStatus::Active,
             retry: None,
+            process_handle: None,
         };
 
         let yaml = serde_saphyr::to_string(&schedule).unwrap();
         assert!(!yaml.contains("retry:"));
+    }
+
+    #[test]
+    fn schedule_with_process_handle_roundtrip() {
+        let schedule = Schedule {
+            id: "test".to_string(),
+            agent: "agent".to_string(),
+            created_by_session: "session".to_string(),
+            destination: ScheduleDestination {
+                gateway: "telegram".to_string(),
+                chat_id: "123".to_string(),
+            },
+            timing: ScheduleTiming::Every {
+                every_seconds: 30,
+                anchor: None,
+            },
+            payload: SchedulePayload::Task {
+                task: "check process".to_string(),
+            },
+            created_at: Utc::now(),
+            status: ScheduleStatus::Active,
+            retry: None,
+            process_handle: Some("01hqxyz123abc".to_string()),
+        };
+
+        let yaml = serde_saphyr::to_string(&schedule).unwrap();
+        assert!(yaml.contains("process_handle:"));
+        assert!(yaml.contains("01hqxyz123abc"));
+
+        let parsed: Schedule = serde_saphyr::from_str(&yaml).unwrap();
+        assert_eq!(parsed.process_handle, Some("01hqxyz123abc".to_string()));
+    }
+
+    #[test]
+    fn schedule_without_process_handle_omits_field() {
+        let schedule = Schedule {
+            id: "test".to_string(),
+            agent: "agent".to_string(),
+            created_by_session: "session".to_string(),
+            destination: ScheduleDestination {
+                gateway: "telegram".to_string(),
+                chat_id: "123".to_string(),
+            },
+            timing: ScheduleTiming::At { at: Utc::now() },
+            payload: SchedulePayload::Message {
+                message: "test".to_string(),
+            },
+            created_at: Utc::now(),
+            status: ScheduleStatus::Active,
+            retry: None,
+            process_handle: None,
+        };
+
+        let yaml = serde_saphyr::to_string(&schedule).unwrap();
+        assert!(!yaml.contains("process_handle:"));
+    }
+
+    #[test]
+    fn schedule_without_process_handle_deserializes_as_none() {
+        // Simulates loading an existing schedule YAML that predates the field
+        let yaml = r#"
+id: test
+agent: agent
+created_by_session: session
+destination:
+  gateway: telegram
+  chat_id: "123"
+schedule:
+  at:
+    at: "2026-06-01T00:00:00Z"
+payload:
+  message:
+    message: hello
+created_at: "2026-01-01T00:00:00Z"
+status: active
+"#;
+        let parsed: Schedule = serde_saphyr::from_str(yaml).unwrap();
+        assert_eq!(parsed.process_handle, None);
     }
 }

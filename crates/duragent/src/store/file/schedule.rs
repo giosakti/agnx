@@ -153,6 +153,7 @@ mod tests {
             created_at: Utc::now(),
             status: ScheduleStatus::Active,
             retry: None,
+            process_handle: None,
         }
     }
 

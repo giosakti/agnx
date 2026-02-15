@@ -7,6 +7,7 @@
 pub mod monitor;
 pub mod registry;
 pub mod tmux;
+pub mod watcher;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,6 +19,7 @@ use thiserror::Error;
 use tokio::sync::oneshot;
 
 use crate::gateway::GatewaySender;
+use crate::scheduler::SchedulerHandle;
 use crate::server::RuntimeServices;
 use crate::sync::KeyedLocks;
 
@@ -38,6 +40,8 @@ pub struct ProcessRegistryHandle {
     pub(crate) gateway_sender: GatewaySender,
     /// Per-process lock for serializing stdin writes.
     pub(crate) stdin_locks: KeyedLocks,
+    /// Scheduler handle for auto-cancelling linked schedules on process exit.
+    pub(crate) scheduler: Option<SchedulerHandle>,
 }
 
 // ============================================================================
@@ -167,4 +171,6 @@ pub struct ProcessEntry {
     pub cancel_tx: Option<oneshot::Sender<()>>,
     /// Stdin handle for non-tmux processes. None if tmux or already closed.
     pub stdin: Option<tokio::process::ChildStdin>,
+    /// Cancel sender for the screen watcher. None if no watcher is active.
+    pub watcher_cancel_tx: Option<oneshot::Sender<()>>,
 }

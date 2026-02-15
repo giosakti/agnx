@@ -4,7 +4,7 @@
 //! and executing them when they fire.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -14,6 +14,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::context::{ContextBuilder, TokenBudget, load_all_directives};
 use crate::gateway::GatewaySender;
+use crate::process::ProcessRegistryHandle;
 use crate::server::RuntimeServices;
 use crate::session::{AgenticResult, ChatSessionCache, SessionHandle, run_agentic_loop};
 use crate::store::{RunLogStore, ScheduleStore as ScheduleStoreTrait};
@@ -110,6 +111,31 @@ impl SchedulerHandle {
         self.cache.list_by_agent(agent).await
     }
 
+    /// Cancel all schedules linked to a process handle.
+    ///
+    /// Called when a background process exits to auto-cancel its watch schedules.
+    pub async fn cancel_by_process_handle(&self, process_handle: &str, agent: &str) {
+        let schedules = self.cache.list_by_agent(agent).await;
+        for schedule in schedules {
+            if schedule.process_handle.as_deref() == Some(process_handle) {
+                if let Err(e) = self.cancel_schedule(&schedule.id, agent).await {
+                    warn!(
+                        schedule_id = %schedule.id,
+                        process_handle = %process_handle,
+                        error = %e,
+                        "Failed to auto-cancel linked schedule"
+                    );
+                } else {
+                    info!(
+                        schedule_id = %schedule.id,
+                        process_handle = %process_handle,
+                        "Auto-cancelled linked schedule"
+                    );
+                }
+            }
+        }
+    }
+
     /// Shutdown the scheduler.
     pub async fn shutdown(&self) {
         if self
@@ -132,6 +158,8 @@ pub struct SchedulerConfig {
     /// Storage backend for run log persistence.
     pub run_log_store: RunLogStoreRef,
     pub chat_session_cache: ChatSessionCache,
+    /// Process registry, set after scheduler starts via OnceLock to break circular dependency.
+    pub process_registry: Arc<OnceLock<ProcessRegistryHandle>>,
 }
 
 /// The scheduler service.
@@ -267,6 +295,7 @@ impl SchedulerService {
             services: self.config.services.clone(),
             gateway_sender: self.config.gateway_sender.clone(),
             chat_session_cache: self.config.chat_session_cache.clone(),
+            process_registry: self.config.process_registry.clone(),
         };
 
         tokio::spawn(async move {
@@ -352,6 +381,7 @@ struct SchedulerConfigRef {
     services: RuntimeServices,
     gateway_sender: GatewaySender,
     chat_session_cache: ChatSessionCache,
+    process_registry: Arc<OnceLock<ProcessRegistryHandle>>,
 }
 
 /// Execute a schedule.
@@ -633,10 +663,13 @@ async fn execute_task_payload(
     .await?;
 
     // Build task message content
-    let task_message_content = format!(
+    let mut task_message_content = format!(
         "[Scheduled Task]\n\n{}\n\n(This is an automated task. Send the result to this chat.)",
         task
     );
+    if let Some(ref handle_id) = schedule.process_handle {
+        task_message_content.push_str(&format!("\n\nLinked process handle: {}", handle_id));
+    }
 
     // Persist user message via actor
     if let Err(e) = handle.add_user_message(task_message_content).await {

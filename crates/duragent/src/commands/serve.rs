@@ -2,7 +2,7 @@
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use anyhow::{Context, Result};
 use tokio::signal;
@@ -181,12 +181,14 @@ pub async fn run(
 
     let schedule_store = Arc::new(FileScheduleStore::new(&schedules_path));
     let run_log_store = Arc::new(FileRunLogStore::new(schedules_path.join("runs")));
+    let process_registry_slot = Arc::new(OnceLock::new());
     let scheduler_config = SchedulerConfig {
         services: services.clone(),
         gateway_sender: gateway_sender.clone(),
         schedule_store,
         run_log_store,
         chat_session_cache: chat_session_cache.clone(),
+        process_registry: process_registry_slot.clone(),
     };
     let scheduler_service = SchedulerService::new(scheduler_config);
     let scheduler_handle = scheduler_service.start().await;
@@ -194,10 +196,17 @@ pub async fn run(
 
     // Initialize process registry for background process management
     let processes_path = workspace.join(config::DEFAULT_PROCESSES_DIR);
-    let process_registry =
-        ProcessRegistryHandle::new(processes_path, services.clone(), gateway_sender.clone()).await;
+    let process_registry = ProcessRegistryHandle::new(
+        processes_path,
+        services.clone(),
+        gateway_sender.clone(),
+        Some(scheduler_handle.clone()),
+    )
+    .await;
     process_registry.recover().await;
     let cleanup_handle = spawn_cleanup_task(process_registry.clone());
+    // Back-fill the OnceLock so scheduled tasks can access the process registry
+    let _ = process_registry_slot.set(process_registry.clone());
     info!("Process registry initialized");
 
     // Set up gateway message handler with sandbox and gateway_manager
