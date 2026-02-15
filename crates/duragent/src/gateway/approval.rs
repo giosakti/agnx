@@ -254,6 +254,10 @@ impl GatewayMessageHandler {
             .build()
             .tool_refs;
 
+        // Acquire per-session agentic loop lock to prevent concurrent loops
+        let loop_lock = self.services.agentic_loop_locks.get(handle.id());
+        let _loop_guard = loop_lock.lock().await;
+
         // Resume the agentic loop
         let result = match resume_agentic_loop(
             provider,
@@ -263,6 +267,7 @@ impl GatewayMessageHandler {
             tool_result,
             &handle,
             tool_refs.as_ref(),
+            None,
         )
         .await
         {
@@ -285,18 +290,19 @@ impl GatewayMessageHandler {
                 // Set session back to Active via actor
                 let _ = handle.set_status(SessionStatus::Active).await;
 
-                // Persist final assistant message via actor
-                if let Err(e) = handle.add_assistant_message(content.clone(), usage).await {
-                    error!(error = %e, "Failed to persist assistant message");
-                }
+                // Persist and send (skip empty responses)
+                if !content.trim().is_empty() {
+                    if let Err(e) = handle.add_assistant_message(content.clone(), usage).await {
+                        error!(error = %e, "Failed to persist assistant message");
+                    }
 
-                // Send response via gateway
-                if let Err(e) = self
-                    .gateway_sender
-                    .send_message(gateway, &data.chat_id, &content, None)
-                    .await
-                {
-                    error!(error = %e, "Failed to send response");
+                    if let Err(e) = self
+                        .gateway_sender
+                        .send_message(gateway, &data.chat_id, &content, None)
+                        .await
+                    {
+                        error!(error = %e, "Failed to send response");
+                    }
                 }
 
                 // Return toast to confirm the approval
@@ -304,7 +310,7 @@ impl GatewayMessageHandler {
             }
             AgenticResult::AwaitingApproval {
                 pending: mut new_pending,
-                partial_content: _,
+                partial_content,
                 usage: _,
                 iterations: _,
                 tool_calls_made: _,
@@ -316,6 +322,17 @@ impl GatewayMessageHandler {
                 if let Err(e) = handle.set_pending_approval(new_pending.clone()).await {
                     error!(error = %e, "Failed to persist pending approval");
                     return Some("Error: Failed to save approval request".to_string());
+                }
+
+                // Send partial content (LLM text before tool call) if present
+                let trimmed = partial_content.trim();
+                if !trimmed.is_empty()
+                    && let Err(e) = self
+                        .gateway_sender
+                        .send_message(gateway, &data.chat_id, trimmed, None)
+                        .await
+                {
+                    error!(error = %e, "Failed to send partial content");
                 }
 
                 // Build and send new approval keyboard

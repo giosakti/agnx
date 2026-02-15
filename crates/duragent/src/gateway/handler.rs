@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use tokio::sync::mpsc;
 use tokio::time::Instant;
 use tracing::{debug, error, warn};
 
@@ -18,7 +19,8 @@ use duragent_gateway_protocol::{
 
 use super::manager::GatewaySender;
 use super::queue::{
-    DrainResult, EnqueueResult, QueuedMessage, SessionMessageQueues, combine_messages,
+    DrainResult, EnqueueResult, QueuedMessage, SessionMessageQueue, SessionMessageQueues,
+    combine_messages,
 };
 use super::routing::{RoutingConfig, is_group_chat};
 use super::{MessageHandler, build_approval_keyboard};
@@ -34,7 +36,9 @@ use crate::context::{
 use crate::process::ProcessRegistryHandle;
 use crate::scheduler::SchedulerHandle;
 use crate::server::RuntimeServices;
-use crate::session::{AgenticResult, ChatSessionCache, SessionHandle, run_agentic_loop};
+use crate::session::{
+    AgenticResult, ChatSessionCache, SessionHandle, SteeringMessage, run_agentic_loop,
+};
 use crate::sync::KeyedLocks;
 use crate::tools::{ReloadDeps, ToolDependencies, ToolExecutionContext, build_executor};
 
@@ -54,6 +58,7 @@ pub struct GatewayHandlerConfig {
 }
 
 /// Handler that routes gateway messages to sessions.
+#[derive(Clone)]
 pub struct GatewayMessageHandler {
     pub(super) services: RuntimeServices,
     /// Send-only handle for gateway communication.
@@ -242,6 +247,8 @@ impl MessageHandler for GatewayMessageHandler {
             gateway: gateway.to_string(),
             data: data.clone(),
             enqueued_at: Instant::now(),
+            persisted: false,
+            steered: false,
         };
 
         let queue_config = self.resolve_queue_config(&handle, routing);
@@ -272,7 +279,7 @@ impl MessageHandler for GatewayMessageHandler {
                 .await;
                 // Flush debounce buffer into the pending queue.
                 // If the session is idle, flush_debounce sends a wake notification
-                // which will be picked up by the drain loop's wake listener.
+                // that drain workers can use to pick up pending work.
                 let _ = queue_clone.flush_debounce(&sender_id, &config_clone).await;
             });
         }
@@ -282,13 +289,56 @@ impl MessageHandler for GatewayMessageHandler {
                 // Process the message directly
                 let response = self.process_queued_message(&queued, &handle).await;
 
-                // Run drain loop for any messages that arrived while processing
-                self.drain_loop(&handle, &queue_config).await;
+                // Drain any queued messages that weren't steered into the loop
+                let handler = self.clone();
+                let handle = handle.clone();
+                let queue = Arc::clone(&queue);
+                let queue_config = queue_config.clone();
+                tokio::spawn(async move {
+                    handler
+                        .drain_queue_after_loop(&handle, queue, &queue_config)
+                        .await;
+                });
 
                 response
             }
             EnqueueResult::Queued | EnqueueResult::Debounced => {
-                // Message is queued/debounced — response will come later via drain loop
+                // Persist for durability
+                if let Some(text) = extract_text(&queued.data.content) {
+                    let sender = &queued.data.sender;
+                    let sender_id = Some(sender.id.clone());
+                    let sender_label = Some(resolve_sender_label(sender));
+                    let content = text.to_string();
+                    let mut persisted = false;
+                    if let Err(e) = handle
+                        .add_user_message_with_sender(
+                            content.clone(),
+                            sender_id.clone(),
+                            sender_label.clone(),
+                        )
+                        .await
+                    {
+                        error!(session_id = %handle.id(), error = %e, "Failed to persist steered message");
+                    } else {
+                        persisted = true;
+                        queue.mark_persisted(&queued).await;
+                    }
+
+                    // Steer into running loop
+                    if let Some(tx) = self.services.steering_channels.get(handle.id()) {
+                        let steered = tx
+                            .send(SteeringMessage {
+                                content,
+                                sender_id,
+                                sender_label,
+                                persisted,
+                            })
+                            .is_ok();
+                        if steered {
+                            queue.mark_steered(&queued).await;
+                        }
+                    }
+                }
                 None
             }
             EnqueueResult::DroppedNew => {
@@ -345,8 +395,16 @@ impl GatewayMessageHandler {
                 } else {
                     text.clone()
                 };
-                self.process_text_message(gateway, &routing.chat_id, handle, &text, sender, routing)
-                    .await
+                self.process_text_message(
+                    gateway,
+                    &routing.chat_id,
+                    handle,
+                    &text,
+                    sender,
+                    routing,
+                    queued.persisted,
+                )
+                .await
             }
             MessageContent::Media { caption, .. } => {
                 if let Some(caption) = caption
@@ -364,6 +422,7 @@ impl GatewayMessageHandler {
                         &text,
                         sender,
                         routing,
+                        queued.persisted,
                     )
                     .await
                 } else {
@@ -381,44 +440,6 @@ impl GatewayMessageHandler {
         }
     }
 
-    /// Run the drain loop after processing a message.
-    ///
-    /// Keeps draining the queue and processing/sending responses until the queue
-    /// is empty. Responses from drained messages are sent directly via the gateway.
-    async fn drain_loop(&self, handle: &SessionHandle, config: &QueueConfig) {
-        let queue = self.session_queues.get(handle.id());
-
-        loop {
-            let drain_result = queue.drain(config).await;
-
-            match drain_result {
-                DrainResult::Idle => break,
-                DrainResult::Batched(messages) => {
-                    let combined = combine_messages(messages);
-                    if let Some(response) = self.process_queued_message(&combined, handle).await {
-                        let _ = self
-                            .gateway_sender
-                            .send_message(
-                                &combined.gateway,
-                                &combined.data.routing.chat_id,
-                                &response,
-                                None,
-                            )
-                            .await;
-                    }
-                }
-                DrainResult::Sequential(msg) => {
-                    if let Some(response) = self.process_queued_message(&msg, handle).await {
-                        let _ = self
-                            .gateway_sender
-                            .send_message(&msg.gateway, &msg.data.routing.chat_id, &response, None)
-                            .await;
-                    }
-                }
-            }
-        }
-    }
-
     /// Process a text message and return the response.
     async fn process_text_message(
         &self,
@@ -428,20 +449,23 @@ impl GatewayMessageHandler {
         text: &str,
         sender: &Sender,
         routing: &RoutingContext,
+        already_persisted: bool,
     ) -> Option<String> {
         let agent = self.services.agents.get(handle.agent())?;
 
         // Persist user message via actor (with sender attribution for gateway messages)
-        if let Err(e) = handle
-            .add_user_message_with_sender(
-                text.to_string(),
-                Some(sender.id.clone()),
-                Some(resolve_sender_label(sender)),
-            )
-            .await
-        {
-            error!(session_id = %handle.id(), error = %e, "Failed to persist user message");
-            return None;
+        if !already_persisted {
+            if let Err(e) = handle
+                .add_user_message_with_sender(
+                    text.to_string(),
+                    Some(sender.id.clone()),
+                    Some(resolve_sender_label(sender)),
+                )
+                .await
+            {
+                error!(session_id = %handle.id(), error = %e, "Failed to persist user message");
+                return None;
+            }
         }
 
         // Route to agentic loop if agent has tools configured
@@ -508,6 +532,10 @@ impl GatewayMessageHandler {
             .and_then(|c| c.message.content.clone())
             .unwrap_or_default();
 
+        if assistant_content.trim().is_empty() {
+            return None;
+        }
+
         if let Err(e) = handle
             .add_assistant_message(assistant_content.clone(), response.usage)
             .await
@@ -516,6 +544,61 @@ impl GatewayMessageHandler {
         }
 
         Some(assistant_content)
+    }
+
+    async fn drain_queue_after_loop(
+        &self,
+        handle: &SessionHandle,
+        queue: Arc<SessionMessageQueue>,
+        queue_config: &QueueConfig,
+    ) {
+        queue.clear_steered().await;
+        loop {
+            match queue.drain(queue_config).await {
+                DrainResult::Idle => break,
+                DrainResult::Batched(messages) => {
+                    let combined = combine_messages(messages);
+                    self.process_and_send_drained_message(&combined, handle)
+                        .await;
+                }
+                DrainResult::Sequential(msg) => {
+                    self.process_and_send_drained_message(&msg, handle).await;
+                }
+            }
+        }
+    }
+
+    async fn process_and_send_drained_message(
+        &self,
+        queued: &QueuedMessage,
+        handle: &SessionHandle,
+    ) {
+        let response = self.process_queued_message(queued, handle).await;
+        let Some(response) = response else {
+            return;
+        };
+        let trimmed = response.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+
+        if let Err(e) = self
+            .gateway_sender
+            .send_message(
+                &queued.gateway,
+                &queued.data.chat_id,
+                trimmed,
+                Some(queued.data.message_id.clone()),
+            )
+            .await
+        {
+            error!(
+                gateway = %queued.gateway,
+                chat_id = %queued.data.chat_id,
+                error = %e,
+                "Failed to send drained response"
+            );
+        }
     }
 
     /// Process a text message using the agentic loop with tool support.
@@ -611,6 +694,16 @@ impl GatewayMessageHandler {
             )
             .messages;
 
+        // Create steering channel before acquiring lock
+        let (steering_tx, steering_rx) = mpsc::unbounded_channel();
+        self.services
+            .steering_channels
+            .insert(handle.id().to_string(), steering_tx);
+
+        // Acquire per-session agentic loop lock to prevent concurrent loops
+        let loop_lock = self.services.agentic_loop_locks.get(handle.id());
+        let _loop_guard = loop_lock.lock().await;
+
         // Run agentic loop
         let result = match run_agentic_loop(
             provider,
@@ -619,15 +712,19 @@ impl GatewayMessageHandler {
             messages,
             handle,
             tool_refs.as_ref(),
+            Some(steering_rx),
         )
         .await
         {
             Ok(r) => r,
             Err(e) => {
+                self.services.steering_channels.remove(handle.id());
                 error!(error = %e, "Agentic loop failed");
                 return Some(format!("Error processing request: {}", e));
             }
         };
+
+        self.services.steering_channels.remove(handle.id());
 
         match result {
             AgenticResult::Complete {
@@ -665,6 +762,17 @@ impl GatewayMessageHandler {
                 // Set session status to Paused via actor
                 if let Err(e) = handle.set_status(SessionStatus::Paused).await {
                     debug!(error = %e, "Failed to set session status to Paused");
+                }
+
+                // Send partial content (LLM text before tool call) if present
+                let trimmed = partial_content.trim();
+                if !trimmed.is_empty()
+                    && let Err(e) = self
+                        .gateway_sender
+                        .send_message(gateway, chat_id, trimmed, None)
+                        .await
+                {
+                    error!(error = %e, "Failed to send partial content");
                 }
 
                 // Build and send approval keyboard

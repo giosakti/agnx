@@ -10,6 +10,8 @@ use tokio::sync::{Mutex, oneshot};
 use tower::limit::ConcurrencyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
 
+use dashmap::DashMap;
+
 use crate::agent::{AgentStore, PolicyLocks};
 use crate::background::BackgroundTasks;
 use crate::handlers;
@@ -17,8 +19,9 @@ use crate::llm::ProviderRegistry;
 use crate::process::ProcessRegistryHandle;
 use crate::sandbox::Sandbox;
 use crate::scheduler::SchedulerHandle;
-use crate::session::{ChatSessionCache, SessionRegistry};
+use crate::session::{ChatSessionCache, SessionRegistry, SteeringSender};
 use crate::store::PolicyStore;
+use crate::sync::KeyedLocks;
 
 // ============================================================================
 // Runtime Services
@@ -35,6 +38,10 @@ pub struct RuntimeServices {
     pub world_memory_path: PathBuf,
     pub workspace_directives_path: PathBuf,
     pub workspace_tools_path: PathBuf,
+    /// Per-session lock to prevent concurrent agentic loops on the same session.
+    pub agentic_loop_locks: KeyedLocks,
+    /// Per-session steering channels for injecting messages into running loops.
+    pub steering_channels: Arc<DashMap<String, SteeringSender>>,
 }
 
 // ============================================================================

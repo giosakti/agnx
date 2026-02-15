@@ -44,6 +44,8 @@ pub async fn test_app_state() -> AppState {
             world_memory_path: tmp.path().join("memory/world"),
             workspace_directives_path: tmp.path().join("directives"),
             workspace_tools_path: tmp.path().join("tools"),
+            agentic_loop_locks: duragent::sync::KeyedLocks::new(),
+            steering_channels: Arc::new(dashmap::DashMap::new()),
         },
         scheduler: None,
         process_registry: None,

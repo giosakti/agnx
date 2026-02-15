@@ -26,6 +26,19 @@ pub struct QueuedMessage {
     pub data: MessageReceivedData,
     /// When this message was enqueued.
     pub enqueued_at: Instant,
+    /// Whether this message has already been persisted to the session log.
+    pub persisted: bool,
+    /// Whether this message was steered into a running agentic loop.
+    pub steered: bool,
+}
+
+impl QueuedMessage {
+    fn matches_identity(&self, other: &QueuedMessage) -> bool {
+        self.gateway == other.gateway
+            && self.data.message_id == other.data.message_id
+            && self.data.chat_id == other.data.chat_id
+            && self.data.sender.id == other.data.sender.id
+    }
 }
 
 /// Result of attempting to enqueue a message.
@@ -247,6 +260,57 @@ impl SessionMessageQueue {
         self.wake.notified().await;
     }
 
+    /// Mark a queued message as persisted.
+    pub async fn mark_persisted(&self, msg: &QueuedMessage) {
+        let mut inner = self.inner.lock().await;
+        for queued in inner.pending.iter_mut() {
+            if queued.matches_identity(msg) {
+                queued.persisted = true;
+            }
+        }
+        for buffer in inner.debounce_buffers.values_mut() {
+            for queued in buffer.iter_mut() {
+                if queued.matches_identity(msg) {
+                    queued.persisted = true;
+                }
+            }
+        }
+    }
+
+    /// Mark a queued message as steered.
+    pub async fn mark_steered(&self, msg: &QueuedMessage) {
+        let mut inner = self.inner.lock().await;
+        for queued in inner.pending.iter_mut() {
+            if queued.matches_identity(msg) {
+                queued.steered = true;
+            }
+        }
+        for buffer in inner.debounce_buffers.values_mut() {
+            for queued in buffer.iter_mut() {
+                if queued.matches_identity(msg) {
+                    queued.steered = true;
+                }
+            }
+        }
+    }
+
+    /// Clear queued entries that were already steered into a running loop.
+    pub async fn clear_steered(&self) {
+        let mut inner = self.inner.lock().await;
+        inner.pending.retain(|msg| !msg.steered);
+        inner.debounce_buffers.retain(|_, buffer| {
+            buffer.retain(|msg| !msg.steered);
+            !buffer.is_empty()
+        });
+    }
+
+    /// Clear all pending messages and mark the session as idle.
+    pub async fn clear(&self) {
+        let mut inner = self.inner.lock().await;
+        inner.pending.clear();
+        inner.busy = false;
+    }
+
     /// Mark the session as idle (used when processing fails or is cancelled).
     pub async fn mark_idle(&self) {
         let mut inner = self.inner.lock().await;
@@ -276,7 +340,11 @@ pub fn combine_messages(messages: Vec<QueuedMessage>) -> QueuedMessage {
     let mut base = iter.next().unwrap();
 
     let mut combined_text = extract_message_text(&base.data).unwrap_or_default();
+    let mut all_persisted = base.persisted;
+    let mut all_steered = base.steered;
     for msg in iter {
+        all_persisted &= msg.persisted;
+        all_steered &= msg.steered;
         if let Some(text) = extract_message_text(&msg.data) {
             combined_text.push('\n');
             combined_text.push_str(&text);
@@ -288,6 +356,8 @@ pub fn combine_messages(messages: Vec<QueuedMessage>) -> QueuedMessage {
     base.data.content = MessageContent::Text {
         text: combined_text,
     };
+    base.persisted = all_persisted;
+    base.steered = all_steered;
     base
 }
 
@@ -397,6 +467,8 @@ mod tests {
                 metadata: serde_json::Value::Null,
             },
             enqueued_at: Instant::now(),
+            persisted: false,
+            steered: false,
         }
     }
 

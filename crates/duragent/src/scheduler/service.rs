@@ -698,10 +698,22 @@ async fn execute_task_payload(
         )
         .messages;
 
+    // Acquire per-session agentic loop lock (wait for active session to finish)
+    let loop_lock = config.services.agentic_loop_locks.get(handle.id());
+    let _loop_guard = loop_lock.lock().await;
+
     // Run agentic loop with SessionHandle
-    let result = run_agentic_loop(provider, &mut executor, &agent, messages, &handle, None)
-        .await
-        .map_err(|e| SchedulerError::ExecutionFailed(e.to_string()))?;
+    let result = run_agentic_loop(
+        provider,
+        &mut executor,
+        &agent,
+        messages,
+        &handle,
+        None,
+        None,
+    )
+    .await
+    .map_err(|e| SchedulerError::ExecutionFailed(e.to_string()))?;
 
     let response = match result {
         AgenticResult::Complete { content, usage, .. } => {

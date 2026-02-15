@@ -22,7 +22,7 @@ use crate::api::{
 };
 use crate::context::{ContextBuilder, TokenBudget, load_all_directives};
 use crate::handlers::problem_details;
-use crate::llm::{ChatRequest, LLMProvider};
+use crate::llm::{ChatRequest, LLMProvider, Role};
 use crate::server::AppState;
 use crate::session::{
     AccumulatingStream, AgenticResult, ApprovalDecisionType, SessionHandle, StreamConfig,
@@ -195,10 +195,13 @@ pub async fn get_messages(
         }
     };
 
-    let iter = messages.into_iter().map(|m| MessageResponse {
-        role: m.role.to_string(),
-        content: m.content.unwrap_or_default(),
-    });
+    let iter = messages
+        .into_iter()
+        .filter(|m| m.role == Role::User || (m.role == Role::Assistant && m.tool_calls.is_none()))
+        .map(|m| MessageResponse {
+            role: m.role.to_string(),
+            content: m.content.unwrap_or_default(),
+        });
     let messages: Vec<_> = match query.limit {
         Some(limit) => iter.take(limit as usize).collect(),
         None => iter.collect(),
@@ -521,6 +524,10 @@ pub async fn approve_command(
         .build()
         .tool_refs;
 
+    // Acquire per-session agentic loop lock to prevent concurrent loops
+    let loop_lock = state.services.agentic_loop_locks.get(&session_id);
+    let _loop_guard = loop_lock.lock().await;
+
     // Resume the agentic loop
     let result = match resume_agentic_loop(
         provider,
@@ -530,6 +537,7 @@ pub async fn approve_command(
         tool_result,
         &handle,
         tool_refs.as_ref(),
+        None,
     )
     .await
     {
@@ -623,6 +631,10 @@ async fn send_message_agentic(state: &AppState, ctx: ChatContext) -> Response {
         agent_tool_configs: ctx.agent_spec.tools.clone(),
     });
 
+    // Acquire per-session agentic loop lock to prevent concurrent loops
+    let loop_lock = state.services.agentic_loop_locks.get(&session_id);
+    let _loop_guard = loop_lock.lock().await;
+
     // Run the agentic loop with SessionHandle
     let result = match run_agentic_loop(
         ctx.provider,
@@ -631,6 +643,7 @@ async fn send_message_agentic(state: &AppState, ctx: ChatContext) -> Response {
         ctx.request.messages,
         &ctx.handle,
         ctx.tool_refs.as_ref(),
+        None,
     )
     .await
     {

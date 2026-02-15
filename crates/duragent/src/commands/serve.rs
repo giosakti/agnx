@@ -175,6 +175,8 @@ pub async fn run(
         world_memory_path: world_memory_path.clone(),
         workspace_directives_path: workspace_directives_path.clone(),
         workspace_tools_path: workspace_tools_path.clone(),
+        agentic_loop_locks: duragent::sync::KeyedLocks::with_cleanup("agentic_loop"),
+        steering_channels: Arc::new(dashmap::DashMap::new()),
     };
 
     let schedule_store = Arc::new(FileScheduleStore::new(&schedules_path));
