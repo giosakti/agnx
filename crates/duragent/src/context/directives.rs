@@ -1,30 +1,69 @@
-//! File-based directives loading.
+//! Directives loading: file-based + runtime defaults.
 //!
-//! Directives are `*.md` files loaded from two directories:
+//! File-based directives are `*.md` files loaded from two directories:
 //! - Workspace-level: `{workspace}/directives/` (shared across all agents)
 //! - Agent-level: `{agent_dir}/directives/` (per-agent)
 //!
-//! Both levels are always concatenated (workspace first, then agent).
+//! Runtime defaults are generated from agent config (e.g. memory directive).
+//! File-based directives override runtime defaults when the `source` name matches.
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use chrono::Utc;
 use tracing::warn;
 
+use crate::agent::AgentSpec;
 use crate::config::DEFAULT_DIRECTIVES_DIR;
 
 use super::{DirectiveEntry, Scope};
 
-/// Load directives from both workspace and agent directories.
+/// Load directives from file system and merge with runtime defaults.
 ///
-/// Workspace directives (scope: Global) come first, then agent directives (scope: Agent).
-pub fn load_all_directives(workspace_directives: &Path, agent_dir: &Path) -> Vec<DirectiveEntry> {
-    let mut directives = load_directives_from_dir(workspace_directives, Scope::Global);
-    directives.extend(load_directives_from_dir(
+/// File-based directives override runtime defaults when the `source` name matches
+/// (e.g. a `directives/memory.md` file overrides the built-in memory directive).
+pub fn load_all_directives(
+    workspace_directives: &Path,
+    agent_dir: &Path,
+    agent: &AgentSpec,
+) -> Vec<DirectiveEntry> {
+    let mut file_directives = load_directives_from_dir(workspace_directives, Scope::Global);
+    file_directives.extend(load_directives_from_dir(
         &agent_dir.join(DEFAULT_DIRECTIVES_DIR),
         Scope::Agent,
     ));
+    let defaults = default_directives(agent);
+    merge_directives(file_directives, defaults)
+}
+
+/// Generate runtime default directives based on agent configuration.
+pub fn default_directives(agent: &AgentSpec) -> Vec<DirectiveEntry> {
+    let mut directives = Vec::new();
+    if agent.memory.is_some() {
+        directives.push(DirectiveEntry {
+            instruction: crate::memory::DEFAULT_MEMORY_DIRECTIVE.to_string(),
+            scope: Scope::Agent,
+            source: "memory".to_string(),
+            added_at: Utc::now(),
+        });
+    }
     directives
+}
+
+/// Merge file-based directives with runtime defaults.
+///
+/// File-based directives win on `source` name conflict.
+fn merge_directives(
+    file_directives: Vec<DirectiveEntry>,
+    defaults: Vec<DirectiveEntry>,
+) -> Vec<DirectiveEntry> {
+    let file_sources: HashSet<&str> = file_directives.iter().map(|d| d.source.as_str()).collect();
+    let mut merged: Vec<DirectiveEntry> = defaults
+        .into_iter()
+        .filter(|d| !file_sources.contains(d.source.as_str()))
+        .collect();
+    merged.extend(file_directives);
+    merged
 }
 
 /// Load all `*.md` directive files from a directory.
@@ -77,29 +116,10 @@ pub fn load_directives_from_dir(dir: &Path, scope: Scope) -> Vec<DirectiveEntry>
         .collect()
 }
 
-/// Ensure the default memory directive file exists.
-///
-/// Creates `{directives_path}/memory.md` with default content if it doesn't exist.
-/// No-op if the file already exists.
-pub fn ensure_memory_directive(directives_path: &Path, default_content: &str) {
-    let path = directives_path.join("memory.md");
-    if path.exists() {
-        return;
-    }
-
-    if let Err(e) = std::fs::create_dir_all(directives_path) {
-        warn!(error = %e, "Failed to create directives directory");
-        return;
-    }
-
-    if let Err(e) = std::fs::write(&path, default_content) {
-        warn!(path = %path.display(), error = %e, "Failed to write default memory directive");
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::AgentMemoryConfig;
     use tempfile::TempDir;
 
     #[test]
@@ -184,7 +204,8 @@ mod tests {
         std::fs::create_dir_all(&agent_directives).unwrap();
         std::fs::write(agent_directives.join("custom.md"), "Agent custom").unwrap();
 
-        let result = load_all_directives(&workspace_dir, &agent_dir);
+        let agent = stub_agent(None);
+        let result = load_all_directives(&workspace_dir, &agent_dir, &agent);
 
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].scope, Scope::Global);
@@ -194,27 +215,109 @@ mod tests {
     }
 
     #[test]
-    fn ensure_creates_memory_directive() {
-        let tmp = TempDir::new().unwrap();
-        let dir = tmp.path().join("directives");
+    fn default_directives_returns_memory_when_enabled() {
+        let agent = stub_agent(Some(AgentMemoryConfig {
+            backend: "filesystem".to_string(),
+        }));
+        let directives = default_directives(&agent);
 
-        ensure_memory_directive(&dir, "Default content");
-
-        let path = dir.join("memory.md");
-        assert!(path.exists());
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "Default content");
+        assert_eq!(directives.len(), 1);
+        assert_eq!(directives[0].source, "memory");
+        assert!(
+            directives[0]
+                .instruction
+                .contains("persistent memory system")
+        );
     }
 
     #[test]
-    fn ensure_does_not_overwrite_existing() {
-        let tmp = TempDir::new().unwrap();
-        let dir = tmp.path().join("directives");
-        std::fs::create_dir(&dir).unwrap();
-        std::fs::write(dir.join("memory.md"), "User-edited content").unwrap();
+    fn default_directives_empty_when_no_memory() {
+        let agent = stub_agent(None);
+        let directives = default_directives(&agent);
+        assert!(directives.is_empty());
+    }
 
-        ensure_memory_directive(&dir, "Default content");
+    #[test]
+    fn merge_file_overrides_runtime_default() {
+        let file = vec![DirectiveEntry {
+            instruction: "Custom memory instructions".to_string(),
+            scope: Scope::Agent,
+            source: "memory".to_string(),
+            added_at: Utc::now(),
+        }];
+        let defaults = vec![DirectiveEntry {
+            instruction: "Default memory instructions".to_string(),
+            scope: Scope::Agent,
+            source: "memory".to_string(),
+            added_at: Utc::now(),
+        }];
 
-        let content = std::fs::read_to_string(dir.join("memory.md")).unwrap();
-        assert_eq!(content, "User-edited content");
+        let merged = merge_directives(file, defaults);
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].instruction, "Custom memory instructions");
+    }
+
+    #[test]
+    fn merge_keeps_non_overlapping() {
+        let file = vec![DirectiveEntry {
+            instruction: "Custom directive".to_string(),
+            scope: Scope::Agent,
+            source: "custom".to_string(),
+            added_at: Utc::now(),
+        }];
+        let defaults = vec![DirectiveEntry {
+            instruction: "Memory directive".to_string(),
+            scope: Scope::Agent,
+            source: "memory".to_string(),
+            added_at: Utc::now(),
+        }];
+
+        let merged = merge_directives(file, defaults);
+
+        assert_eq!(merged.len(), 2);
+        let sources: Vec<&str> = merged.iter().map(|d| d.source.as_str()).collect();
+        assert!(sources.contains(&"memory"));
+        assert!(sources.contains(&"custom"));
+    }
+
+    /// Minimal AgentSpec for directive tests.
+    fn stub_agent(memory: Option<AgentMemoryConfig>) -> crate::agent::AgentSpec {
+        use crate::agent::{
+            AgentMetadata, AgentSessionConfig, HooksConfig, ModelConfig, ToolPolicy,
+        };
+        use crate::llm::Provider;
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+
+        crate::agent::AgentSpec {
+            api_version: "duragent/v1alpha1".to_string(),
+            kind: "Agent".to_string(),
+            metadata: AgentMetadata {
+                name: "test-agent".to_string(),
+                description: None,
+                version: None,
+                labels: HashMap::new(),
+            },
+            model: ModelConfig {
+                provider: Provider::Other("test".to_string()),
+                name: "test-model".to_string(),
+                base_url: None,
+                temperature: None,
+                max_input_tokens: None,
+                max_output_tokens: None,
+            },
+            soul: None,
+            system_prompt: None,
+            instructions: None,
+            skills: Vec::new(),
+            session: AgentSessionConfig::default(),
+            memory,
+            tools: Vec::new(),
+            policy: ToolPolicy::default(),
+            hooks: HooksConfig::default(),
+            access: None,
+            agent_dir: PathBuf::from("/tmp/test-agent"),
+        }
     }
 }

@@ -12,7 +12,7 @@ mod tokens;
 mod truncation;
 
 pub use builder::ContextBuilder;
-pub use directives::{ensure_memory_directive, load_all_directives};
+pub use directives::load_all_directives;
 pub use tokens::*;
 pub use truncation::*;
 
@@ -131,12 +131,12 @@ pub mod priority {
     pub const INSTRUCTIONS: i32 = 200;
     /// Hook-injected blocks.
     pub const HOOK: i32 = 300;
-    /// Skill-injected blocks (active skill context).
-    pub const SKILL: i32 = 400;
-    /// Session-specific additions.
-    pub const SESSION: i32 = 500;
     /// Runtime directives.
-    pub const DIRECTIVES: i32 = 600;
+    pub const DIRECTIVES: i32 = 400;
+    /// Skill-injected blocks (active skill context).
+    pub const SKILL: i32 = 500;
+    /// Session-specific additions.
+    pub const SESSION: i32 = 600;
 }
 
 fn normalize_message_role(msg: &Message) -> Message {
@@ -319,28 +319,35 @@ impl StructuredContext {
             return None;
         }
 
-        let mut output = String::new();
+        // Build the directives block (if any) so it sorts with other blocks
+        let directives_block = if !self.directives.is_empty() {
+            let mut content = String::from("## Directives\n");
+            for directive in &self.directives {
+                content.push_str(&format!("- {}\n", directive.instruction));
+            }
+            Some(SystemBlock {
+                content,
+                label: "directives".to_string(),
+                source: BlockSource::Runtime,
+                priority: priority::DIRECTIVES,
+            })
+        } else {
+            None
+        };
 
-        // Sort blocks by priority, then by insertion order (stable sort)
-        let mut blocks: Vec<_> = self.system_blocks.iter().collect();
+        // Sort all blocks (including directives) by priority
+        let mut blocks: Vec<&SystemBlock> = self.system_blocks.iter().collect();
+        if let Some(ref db) = directives_block {
+            blocks.push(db);
+        }
         blocks.sort_by_key(|b| b.priority);
 
+        let mut output = String::new();
         for block in blocks {
             if !output.is_empty() {
                 output.push_str("\n\n");
             }
             output.push_str(&block.content);
-        }
-
-        // Append directives if any
-        if !self.directives.is_empty() {
-            if !output.is_empty() {
-                output.push_str("\n\n");
-            }
-            output.push_str("## Directives\n");
-            for directive in &self.directives {
-                output.push_str(&format!("- {}\n", directive.instruction));
-            }
         }
 
         if output.is_empty() {

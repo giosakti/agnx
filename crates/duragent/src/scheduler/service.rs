@@ -710,8 +710,11 @@ async fn execute_task_payload(
 
     // Build messages using StructuredContext
     let history = handle.get_messages().await.unwrap_or_default();
-    let directives =
-        load_all_directives(&config.services.workspace_directives_path, &agent.agent_dir);
+    let directives = load_all_directives(
+        &config.services.workspace_directives_path,
+        &agent.agent_dir,
+        &agent,
+    );
     let budget = TokenBudget {
         max_input_tokens: agent.model.effective_max_input_tokens(),
         max_output_tokens: agent.model.max_output_tokens.unwrap_or(4096),

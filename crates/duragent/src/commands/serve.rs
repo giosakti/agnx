@@ -78,17 +78,6 @@ pub async fn run(
     let (store, providers, policy_store) = load_agents(&agents_dir, &workspace).await;
     info!(agents = store.len(), "Loaded agents");
 
-    // Auto-create memory directive per agent that has memory enabled
-    for (_, agent) in store.snapshot() {
-        if agent.memory.is_some() {
-            let agent_directives_path = agent.agent_dir.join(config::DEFAULT_DIRECTIVES_DIR);
-            duragent::context::ensure_memory_directive(
-                &agent_directives_path,
-                duragent::memory::DEFAULT_MEMORY_DIRECTIVE,
-            );
-        }
-    }
-
     // Initialize session store and registry, then recover persisted sessions
     let session_store: Arc<dyn duragent::store::SessionStore> =
         Arc::new(FileSessionStore::new(&sessions_path));

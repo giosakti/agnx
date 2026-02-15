@@ -487,8 +487,11 @@ impl GatewayMessageHandler {
         };
 
         // Build structured context and render to ChatRequest
-        let directives =
-            load_all_directives(&self.services.workspace_directives_path, &agent.agent_dir);
+        let directives = load_all_directives(
+            &self.services.workspace_directives_path,
+            &agent.agent_dir,
+            &agent,
+        );
         let mut builder = ContextBuilder::new()
             .from_agent_spec(&agent)
             .with_messages(history)
@@ -659,8 +662,11 @@ impl GatewayMessageHandler {
                 return Some(format!("Error: {}", e));
             }
         };
-        let directives =
-            load_all_directives(&self.services.workspace_directives_path, &agent.agent_dir);
+        let directives = load_all_directives(
+            &self.services.workspace_directives_path,
+            &agent.agent_dir,
+            &agent,
+        );
         let mut builder = ContextBuilder::new()
             .from_agent_spec(&agent)
             .with_messages(history)

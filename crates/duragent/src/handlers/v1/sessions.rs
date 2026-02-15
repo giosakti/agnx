@@ -705,8 +705,11 @@ async fn prepare_chat_context(
     };
 
     // Build structured context from agent spec and history
-    let directives =
-        load_all_directives(&state.services.workspace_directives_path, &agent.agent_dir);
+    let directives = load_all_directives(
+        &state.services.workspace_directives_path,
+        &agent.agent_dir,
+        &agent,
+    );
     let structured_context = ContextBuilder::new()
         .from_agent_spec(&agent)
         .with_messages(history)
