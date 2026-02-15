@@ -93,6 +93,12 @@ payload:
     message: "Reminder: review the PR"
 ```
 
+## Process-Linked Schedules
+
+A schedule can be linked to a background process by passing `process_handle` when creating it. When the linked process exits (completes, fails, times out, or is killed), all schedules with that `process_handle` are automatically cancelled.
+
+This is useful for the [watch pattern](./background-processes.md#supervised-process-watch-pattern), where a recurring schedule monitors a background process. Without `process_handle`, the watch schedule would keep firing after the process exits until the next poll notices it's done.
+
 ## Retry
 
 Schedules support optional retry with exponential backoff and jitter for transient failures (e.g., LLM provider 503).
