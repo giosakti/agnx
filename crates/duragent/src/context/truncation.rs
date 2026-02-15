@@ -208,6 +208,14 @@ fn find_iteration_groups(messages: &[Message], conversation_end_idx: usize) -> V
                 i += 1;
             }
 
+            // Consume trailing [steering] user message if present
+            if i < messages.len()
+                && messages[i].role == Role::User
+                && messages[i].content_str().starts_with("[steering]")
+            {
+                i += 1;
+            }
+
             groups.push(IterationGroup { start, end: i - 1 });
         } else {
             i += 1;
@@ -267,7 +275,7 @@ mod tests {
     fn truncate_tool_result_unicode_boundary() {
         // "日" is 3 bytes. Create a string of 100 kanji = 300 bytes = 75 tokens.
         // Truncate to 10 tokens = 40 bytes. 40 / 3 = 13.33, so 13 complete chars.
-        let content: String = std::iter::repeat('日').take(100).collect();
+        let content: String = "日".repeat(100);
         let result = truncate_tool_result(&content, 10, ToolResultTruncation::Head);
         // Should not panic or produce invalid UTF-8
         assert!(result.contains("[truncated:"));
@@ -441,6 +449,47 @@ mod tests {
         assert_eq!(messages[1].content_str(), "hello");
         assert_eq!(messages[2].content_str(), "hi there");
         assert_eq!(messages[3].content_str(), "do something");
+    }
+
+    #[test]
+    fn iteration_groups_include_trailing_steering() {
+        let messages = vec![
+            Message::text(Role::User, "hello"), // conversation, idx 0
+            assistant_tool_call_msg(),          // group 1 start, idx 1
+            tool_result_msg("result 1"),        // idx 2
+            Message::text(Role::User, "[steering] Check the output above."), // idx 3
+            assistant_tool_call_msg(),          // group 2 start, idx 4
+            tool_result_msg("result 2"),        // idx 5
+        ];
+
+        let groups = find_iteration_groups(&messages, 1);
+        assert_eq!(groups.len(), 2);
+        // Group 1 should include the steering message (idx 1..=3)
+        assert_eq!(groups[0].start, 1);
+        assert_eq!(groups[0].end, 3);
+        // Group 2 is idx 4..=5
+        assert_eq!(groups[1].start, 4);
+        assert_eq!(groups[1].end, 5);
+    }
+
+    #[test]
+    fn drop_oldest_iterations_drops_steering_with_group() {
+        let mut messages = vec![
+            Message::text(Role::User, "hello"), // conversation
+            assistant_tool_call_msg(),          // group 1
+            tool_result_msg(&"x".repeat(10000)),
+            Message::text(Role::User, "[steering] Act on the output."),
+            assistant_tool_call_msg(), // group 2
+            tool_result_msg("small result"),
+        ];
+
+        drop_oldest_iterations(&mut messages, 1, 50);
+
+        // Group 1 (including steering) should be dropped
+        assert_eq!(messages[0].content_str(), "hello");
+        assert_eq!(messages.last().unwrap().content_str(), "small result");
+        // Conversation + last group (assistant + tool) = 3 messages
+        assert_eq!(messages.len(), 3);
     }
 
     #[test]

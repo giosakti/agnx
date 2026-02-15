@@ -19,8 +19,7 @@ use duragent_gateway_protocol::{
 
 use super::manager::GatewaySender;
 use super::queue::{
-    DrainResult, EnqueueResult, QueuedMessage, SessionMessageQueue, SessionMessageQueues,
-    combine_messages,
+    DrainResult, EnqueueResult, QueuedMessage, SessionMessageQueues, combine_messages,
 };
 use super::routing::{RoutingConfig, is_group_chat};
 use super::{MessageHandler, build_approval_keyboard};

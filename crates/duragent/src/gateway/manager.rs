@@ -405,22 +405,26 @@ impl GatewayManager {
                             };
 
                             if let Some(response) = response {
-                                // Send response back through gateway
-                                if let Err(e) = manager
-                                    .send_message(
-                                        &gateway,
-                                        &data.chat_id,
-                                        &response,
-                                        Some(data.message_id.clone()),
-                                    )
-                                    .await
-                                {
-                                    error!(
-                                        gateway = %gateway,
-                                        chat_id = %data.chat_id,
-                                        error = %e,
-                                        "Failed to send response"
-                                    );
+                                // Skip empty responses
+                                let trimmed = response.trim();
+                                if !trimmed.is_empty() {
+                                    // Send response back through gateway
+                                    if let Err(e) = manager
+                                        .send_message(
+                                            &gateway,
+                                            &data.chat_id,
+                                            trimmed,
+                                            Some(data.message_id.clone()),
+                                        )
+                                        .await
+                                    {
+                                        error!(
+                                            gateway = %gateway,
+                                            chat_id = %data.chat_id,
+                                            error = %e,
+                                            "Failed to send response"
+                                        );
+                                    }
                                 }
                             }
                         });

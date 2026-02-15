@@ -278,7 +278,7 @@ mod tests {
     fn key_format() {
         assert_eq!(
             ChatSessionCache::key("telegram", "123", "agent1"),
-            "telegram\0123\0agent1"
+            "telegram\x00123\x00agent1"
         );
     }
 }

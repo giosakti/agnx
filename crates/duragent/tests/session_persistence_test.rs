@@ -220,7 +220,7 @@ async fn all_event_types_roundtrip() {
             3,
             SessionEventPayload::ToolCall {
                 call_id: "call_abc123".to_string(),
-                tool_name: "web_search".to_string(),
+                tool_name: "web".to_string(),
                 arguments: serde_json::json!({"query": "rust programming"}),
             },
         ),
@@ -282,7 +282,7 @@ async fn all_event_types_roundtrip() {
             arguments,
         } => {
             assert_eq!(call_id, "call_abc123");
-            assert_eq!(tool_name, "web_search");
+            assert_eq!(tool_name, "web");
             assert_eq!(arguments["query"], "rust programming");
         }
         _ => panic!("expected ToolCall"),
@@ -944,16 +944,16 @@ async fn load_events_handles_only_empty_lines() {
 }
 
 #[tokio::test]
-async fn load_snapshot_returns_error_for_invalid_yaml() {
+async fn load_snapshot_returns_error_for_invalid_json() {
     let temp_dir = TempDir::new().unwrap();
     let store = create_store(&temp_dir);
-    let session_id = "invalid_yaml_test";
+    let session_id = "invalid_json_test";
 
     let session_dir = temp_dir.path().join("sessions").join(session_id);
     tokio::fs::create_dir_all(&session_dir).await.unwrap();
 
-    let state_path = session_dir.join("state.yaml");
-    tokio::fs::write(&state_path, "not: [valid: yaml: [[[")
+    let state_path = session_dir.join("state.json");
+    tokio::fs::write(&state_path, "not valid json {{{")
         .await
         .unwrap();
 
@@ -985,9 +985,9 @@ async fn load_snapshot_returns_error_for_incompatible_schema() {
     let session_dir = temp_dir.path().join("sessions").join(session_id);
     tokio::fs::create_dir_all(&session_dir).await.unwrap();
 
-    let yaml = serde_saphyr::to_string(&snapshot).unwrap();
-    let state_path = session_dir.join("state.yaml");
-    tokio::fs::write(&state_path, yaml).await.unwrap();
+    let json = serde_json::to_string(&snapshot).unwrap();
+    let state_path = session_dir.join("state.json");
+    tokio::fs::write(&state_path, json).await.unwrap();
 
     let result = store.load_snapshot(session_id).await;
 
@@ -1022,7 +1022,7 @@ async fn snapshot_write_is_atomic() {
         .path()
         .join("sessions")
         .join(session_id)
-        .join("state.yaml");
+        .join("state.json");
     assert!(final_path.exists());
 
     // Verify temp file does not exist
@@ -1030,7 +1030,7 @@ async fn snapshot_write_is_atomic() {
         .path()
         .join("sessions")
         .join(session_id)
-        .join("state.yaml.tmp");
+        .join("state.json.tmp");
     assert!(!temp_path.exists());
 }
 
@@ -1079,6 +1079,6 @@ async fn snapshot_overwrite_is_atomic() {
         .path()
         .join("sessions")
         .join(session_id)
-        .join("state.yaml.tmp");
+        .join("state.json.tmp");
     assert!(!temp_path.exists());
 }

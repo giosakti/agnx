@@ -276,7 +276,7 @@ mod tests {
     fn test_chat_session_cache_key() {
         // Cache key now includes agent for routing rule changes
         let key = ChatSessionCache::key("telegram", "12345", "my-agent");
-        assert_eq!(key, "telegram\012345\0my-agent");
+        assert_eq!(key, "telegram\x0012345\x00my-agent");
     }
 
     #[test]

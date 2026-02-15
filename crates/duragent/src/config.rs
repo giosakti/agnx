@@ -445,30 +445,47 @@ fn default_true() -> bool {
 /// ```
 fn expand_env_vars(input: &str) -> Result<String, ConfigError> {
     let mut result = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
 
-    while let Some(c) = chars.next() {
-        if c == '$' {
-            match chars.peek() {
-                // Escaped $ -> literal $
-                Some('$') => {
-                    chars.next();
-                    result.push('$');
-                }
-                // Start of variable reference
-                Some('{') => {
-                    chars.next(); // consume '{'
-                    let expanded = parse_var_reference(&mut chars)?;
-                    result.push_str(&expanded);
-                }
-                // Not a variable reference, keep literal $
-                _ => {
-                    result.push('$');
-                }
-            }
-        } else {
-            result.push(c);
+    for (i, line) in input.lines().enumerate() {
+        if i > 0 {
+            result.push('\n');
         }
+
+        // Skip expansion on YAML comment lines
+        if line.trim_start().starts_with('#') {
+            result.push_str(line);
+            continue;
+        }
+
+        let mut chars = line.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '$' {
+                match chars.peek() {
+                    // Escaped $ -> literal $
+                    Some('$') => {
+                        chars.next();
+                        result.push('$');
+                    }
+                    // Start of variable reference
+                    Some('{') => {
+                        chars.next(); // consume '{'
+                        let expanded = parse_var_reference(&mut chars)?;
+                        result.push_str(&expanded);
+                    }
+                    // Not a variable reference, keep literal $
+                    _ => {
+                        result.push('$');
+                    }
+                }
+            } else {
+                result.push(c);
+            }
+        }
+    }
+
+    // Preserve trailing newline if present
+    if input.ends_with('\n') {
+        result.push('\n');
     }
 
     Ok(result)
@@ -1035,6 +1052,24 @@ routes:
         let input = "cost is $50";
         let result = expand_env_vars(input).unwrap();
         assert_eq!(result, "cost is $50");
+    }
+
+    #[test]
+    fn test_expand_env_vars_skips_comments() {
+        // Required var in a comment should not error
+        let input = "key: value\n# comment: ${MISSING_VAR_IN_COMMENT}\nother: ok";
+        let result = expand_env_vars(input).unwrap();
+        assert_eq!(
+            result,
+            "key: value\n# comment: ${MISSING_VAR_IN_COMMENT}\nother: ok"
+        );
+    }
+
+    #[test]
+    fn test_expand_env_vars_skips_indented_comments() {
+        let input = "  # bot_token: ${MISSING_VAR_INDENTED}";
+        let result = expand_env_vars(input).unwrap();
+        assert_eq!(result, "  # bot_token: ${MISSING_VAR_INDENTED}");
     }
 
     #[tokio::test]
