@@ -24,8 +24,8 @@ pub use policy::{
 };
 pub use skill::{SkillMetadata, SkillParseError};
 pub use spec::{
-    AgentFileRefs, AgentMetadata, AgentSessionConfig, AgentSpec, ContextConfig,
-    DEFAULT_MAX_TOOL_ITERATIONS, LoadedAgentFiles, ModelConfig, OnDisconnect, ToolConfig,
-    ToolResultTruncation, validate_builtin_tools,
+    AfterToolHook, AgentFileRefs, AgentMetadata, AgentSessionConfig, AgentSpec, BeforeToolHook,
+    BeforeToolType, ContextConfig, DEFAULT_MAX_TOOL_ITERATIONS, HooksConfig, LoadedAgentFiles,
+    ModelConfig, OnDisconnect, ToolConfig, ToolResultTruncation, validate_builtin_tools,
 };
 pub use store::{AgentStore, log_scan_warnings};

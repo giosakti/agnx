@@ -139,6 +139,16 @@ pub mod priority {
     pub const DIRECTIVES: i32 = 600;
 }
 
+fn normalize_message_role(msg: &Message) -> Message {
+    if msg.role == Role::Steering {
+        let mut mapped = msg.clone();
+        mapped.role = Role::User;
+        mapped
+    } else {
+        msg.clone()
+    }
+}
+
 impl StructuredContext {
     /// Create a new empty context.
     pub fn new() -> Self {
@@ -190,7 +200,7 @@ impl StructuredContext {
             messages.push(Message::text(Role::System, content));
         }
 
-        messages.extend(self.messages.iter().cloned());
+        messages.extend(self.messages.iter().map(normalize_message_role));
 
         ChatRequest {
             model: model.to_string(),
@@ -278,7 +288,11 @@ impl StructuredContext {
             ));
         }
 
-        messages.extend(self.messages[included_from..].iter().cloned());
+        messages.extend(
+            self.messages[included_from..]
+                .iter()
+                .map(normalize_message_role),
+        );
 
         ChatRequest {
             model: model.to_string(),

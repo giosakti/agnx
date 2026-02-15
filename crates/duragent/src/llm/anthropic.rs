@@ -291,7 +291,7 @@ fn to_request(request: &ChatRequest, stream: Option<bool>, oauth: bool) -> Reque
                     system_parts.push(content.clone());
                 }
             }
-            Role::User => {
+            Role::User | Role::Steering => {
                 let content = msg.content.clone().unwrap_or_default();
                 messages.push(RequestMessage::Text {
                     role: "user".to_string(),

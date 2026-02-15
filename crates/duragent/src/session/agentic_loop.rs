@@ -16,19 +16,32 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::StreamExt;
+use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
 use serde::{Deserialize, Serialize};
 
-use crate::agent::{AgentSpec, ContextConfig, ToolType};
+use crate::agent::{AgentSpec, ContextConfig, HooksConfig, ToolType};
 use crate::context::{drop_oldest_iterations, mask_tool_results, truncate_tool_result};
 use crate::llm::{ChatRequest, LLMError, LLMProvider, Message, Role, StreamEvent, ToolCall, Usage};
 use crate::session::handle::SessionHandle;
-use crate::tools::{ToolError, ToolExecutor, ToolResult};
+use crate::tools::hooks::{GuardVerdict, HookContext, run_after_tool, run_before_tool};
+use crate::tools::{ToolError, ToolExecutor, ToolResult, extract_action};
 
 // ============================================================================
 // Types
 // ============================================================================
+
+/// A message injected into a running agentic loop.
+pub struct SteeringMessage {
+    pub content: String,
+    pub sender_id: Option<String>,
+    pub sender_label: Option<String>,
+    pub persisted: bool,
+}
+
+pub type SteeringSender = mpsc::UnboundedSender<SteeringMessage>;
+pub type SteeringReceiver = mpsc::UnboundedReceiver<SteeringMessage>;
 
 /// Result of running the agentic loop.
 #[derive(Debug)]
@@ -141,7 +154,10 @@ impl PendingApproval {
 /// - `AwaitingApproval`: Tool requires user approval, pause the loop
 enum ToolCallOutcome {
     /// Tool executed, add this message to conversation and continue.
-    Executed(Message),
+    Executed {
+        tool_result_msg: Message,
+        steering_msg: Option<Message>,
+    },
     /// Tool requires approval, pause the loop with this pending state.
     AwaitingApproval(PendingApproval),
 }
@@ -165,11 +181,13 @@ pub async fn run_agentic_loop(
     initial_messages: Vec<Message>,
     handle: &SessionHandle,
     tool_filter: Option<&HashSet<String>>,
+    steering_rx: Option<SteeringReceiver>,
 ) -> Result<AgenticResult, AgenticError> {
     let max_iterations = agent_spec.session.max_tool_iterations;
     let llm_timeout = Duration::from_secs(agent_spec.session.llm_timeout_seconds);
     let context_config = &agent_spec.session.context;
 
+    let mut steering_rx = steering_rx;
     let mut messages = initial_messages;
     let conversation_end_idx = messages.len();
     let mut total_usage: Option<Usage> = None;
@@ -187,6 +205,16 @@ pub async fn run_agentic_loop(
 
         if iterations > max_iterations {
             return Err(AgenticError::MaxIterationsExceeded(max_iterations));
+        }
+
+        // Drain steering messages (skip first iteration — we just started)
+        if iterations > 1
+            && let Some(ref mut rx) = steering_rx
+        {
+            let steered = drain_steering(rx);
+            if !steered.is_empty() {
+                inject_steered_messages(handle, &mut messages, steered).await;
+            }
         }
 
         // Layer 3b: Mask old tool results (after first iteration)
@@ -291,7 +319,7 @@ pub async fn run_agentic_loop(
         // Execute tools sequentially to catch approval requirements
         // (We process one at a time so we can pause at the first approval request)
         let mut reload_requested = false;
-        for tool_call in &tool_calls {
+        for (i, tool_call) in tool_calls.iter().enumerate() {
             tool_calls_made += 1;
 
             if tool_call.function.name == "reload_tools" {
@@ -305,12 +333,19 @@ pub async fn run_agentic_loop(
                 &messages,
                 &content,
                 context_config,
+                &agent_spec.hooks,
             )
             .await;
 
             match outcome {
-                ToolCallOutcome::Executed(tool_result_msg) => {
+                ToolCallOutcome::Executed {
+                    tool_result_msg,
+                    steering_msg,
+                } => {
                     messages.push(tool_result_msg);
+                    if let Some(msg) = steering_msg {
+                        messages.push(msg);
+                    }
                 }
                 ToolCallOutcome::AwaitingApproval(pending) => {
                     return Ok(AgenticResult::AwaitingApproval {
@@ -320,6 +355,43 @@ pub async fn run_agentic_loop(
                         iterations,
                         tool_calls_made,
                     });
+                }
+            }
+
+            // Check for steering between tool calls
+            if let Some(ref mut rx) = steering_rx {
+                let steered = drain_steering(rx);
+                if !steered.is_empty() {
+                    // Skip remaining tool calls with synthetic results
+                    for remaining in &tool_calls[i + 1..] {
+                        let arguments = parse_tool_arguments(
+                            &remaining.function.name,
+                            &remaining.function.arguments,
+                        );
+                        if let Err(e) = handle
+                            .enqueue_tool_call(
+                                remaining.id.clone(),
+                                remaining.function.name.clone(),
+                                arguments,
+                            )
+                            .await
+                        {
+                            warn!(error = %e, "Failed to enqueue tool call event");
+                        }
+                        if let Err(e) = handle
+                            .enqueue_tool_result(remaining.id.clone(), false, "Skipped".into())
+                            .await
+                        {
+                            warn!(error = %e, "Failed to enqueue tool result event");
+                        }
+                        messages.push(Message::tool_result(
+                            &remaining.id,
+                            "Skipped: new user message received",
+                        ));
+                    }
+                    // Inject steered messages
+                    inject_steered_messages(handle, &mut messages, steered).await;
+                    break;
                 }
             }
         }
@@ -338,6 +410,7 @@ pub async fn run_agentic_loop(
 /// This continues the loop from where it paused, injecting the tool result
 /// (either the actual execution result or a denial message) and continuing
 /// until completion or another approval is needed.
+#[allow(clippy::too_many_arguments)]
 pub async fn resume_agentic_loop(
     provider: Arc<dyn LLMProvider>,
     executor: &mut ToolExecutor,
@@ -346,6 +419,7 @@ pub async fn resume_agentic_loop(
     tool_result: ToolResult,
     handle: &SessionHandle,
     tool_filter: Option<&HashSet<String>>,
+    steering_rx: Option<SteeringReceiver>,
 ) -> Result<AgenticResult, AgenticError> {
     // Record tool result event
     if let Err(e) = handle
@@ -368,6 +442,7 @@ pub async fn resume_agentic_loop(
         messages,
         handle,
         tool_filter,
+        steering_rx,
     )
     .await
 }
@@ -379,11 +454,13 @@ pub async fn resume_agentic_loop(
 /// Execute a single tool call and return the outcome.
 ///
 /// This handles:
+/// - Running before-tool hooks (guards)
 /// - Recording the tool call event
 /// - Executing the tool
 /// - Handling approval requirements (pausing the loop)
 /// - Handling errors (converting to tool result messages)
 /// - Recording the tool result event
+/// - Running after-tool hooks (steering)
 async fn execute_tool_call(
     executor: &ToolExecutor,
     handle: &SessionHandle,
@@ -391,21 +468,51 @@ async fn execute_tool_call(
     messages: &[Message],
     content: &str,
     context_config: &ContextConfig,
+    hooks: &HooksConfig,
 ) -> ToolCallOutcome {
-    // Parse arguments
-    let arguments: serde_json::Value = match serde_json::from_str(&tool_call.function.arguments) {
-        Ok(v) => v,
-        Err(e) => {
-            let truncated: String = tool_call.function.arguments.chars().take(200).collect();
-            warn!(
-                tool = %tool_call.function.name,
-                error = %e,
-                raw = %truncated,
-                "Malformed tool call arguments, using empty object"
-            );
-            serde_json::Value::default()
-        }
+    // Parse arguments (empty string is valid — means no arguments)
+    let raw_args = &tool_call.function.arguments;
+    let arguments = parse_tool_arguments(&tool_call.function.name, raw_args);
+
+    // Extract action for hook context
+    let action_str = extract_action(raw_args);
+    let hook_ctx = HookContext {
+        tool_name: &tool_call.function.name,
+        action: action_str.as_deref(),
+        arguments: &arguments,
+        messages,
     };
+
+    // Run before-tool hooks (guards)
+    if let GuardVerdict::Reject(reason) = run_before_tool(hooks, &hook_ctx) {
+        let result = ToolResult {
+            success: false,
+            content: reason,
+        };
+
+        // Record tool call + rejected result events
+        if let Err(e) = handle
+            .enqueue_tool_call(
+                tool_call.id.clone(),
+                tool_call.function.name.clone(),
+                arguments.clone(),
+            )
+            .await
+        {
+            warn!(error = %e, "Failed to enqueue tool call event");
+        }
+        if let Err(e) = handle
+            .enqueue_tool_result(tool_call.id.clone(), false, result.content.clone())
+            .await
+        {
+            warn!(error = %e, "Failed to enqueue tool result event");
+        }
+
+        return ToolCallOutcome::Executed {
+            tool_result_msg: Message::tool_result(&tool_call.id, result.content),
+            steering_msg: None,
+        };
+    }
 
     // Record tool call event
     if let Err(e) = handle
@@ -472,9 +579,16 @@ async fn execute_tool_call(
         warn!(error = %e, "Failed to enqueue tool result event");
     }
 
+    // Run after-tool hooks (steering)
+    let steering_msg = run_after_tool(hooks, &hook_ctx, &result)
+        .map(|msg| Message::steering(format!("[steering] {}", msg)));
+
     // Return the tool result message (with truncated content)
     let tool_result_msg = Message::tool_result(&tool_call.id, truncated_content);
-    ToolCallOutcome::Executed(tool_result_msg)
+    ToolCallOutcome::Executed {
+        tool_result_msg,
+        steering_msg,
+    }
 }
 
 /// Handle a tool that requires approval.
@@ -515,6 +629,58 @@ fn build_assistant_message(content: &str, tool_calls: &[ToolCall]) -> Message {
             content: Some(content.to_string()),
             tool_calls: Some(tool_calls.to_vec()),
             tool_call_id: None,
+        }
+    }
+}
+
+/// Inject steered messages into the conversation, persisting when needed.
+async fn inject_steered_messages(
+    handle: &SessionHandle,
+    messages: &mut Vec<Message>,
+    steered: Vec<SteeringMessage>,
+) {
+    for msg in steered {
+        let content = msg.content;
+        if !msg.persisted {
+            handle
+                .add_user_message_with_sender(
+                    content.clone(),
+                    msg.sender_id.clone(),
+                    msg.sender_label.clone(),
+                )
+                .await
+                .ok();
+        }
+        messages.push(Message::text(Role::User, &content));
+    }
+}
+
+/// Drain all pending steering messages from the channel.
+fn drain_steering(rx: &mut SteeringReceiver) -> Vec<SteeringMessage> {
+    let mut msgs = Vec::new();
+    while let Ok(msg) = rx.try_recv() {
+        msgs.push(msg);
+    }
+    msgs
+}
+
+/// Parse tool arguments JSON, handling empty or malformed inputs.
+fn parse_tool_arguments(tool_name: &str, raw_args: &str) -> serde_json::Value {
+    if raw_args.trim().is_empty() {
+        return serde_json::Value::Object(Default::default());
+    }
+
+    match serde_json::from_str(raw_args) {
+        Ok(v) => v,
+        Err(e) => {
+            let truncated: String = raw_args.chars().take(200).collect();
+            warn!(
+                tool = %tool_name,
+                error = %e,
+                raw = %truncated,
+                "Malformed tool call arguments, using empty object"
+            );
+            serde_json::Value::default()
         }
     }
 }
@@ -572,6 +738,34 @@ mod tests {
         };
         assert!(format!("{:?}", result).contains("AwaitingApproval"));
         assert!(format!("{:?}", result).contains("call_123"));
+    }
+
+    #[test]
+    fn drain_steering_collects_pending_messages() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        tx.send(SteeringMessage {
+            content: "hello".into(),
+            sender_id: None,
+            sender_label: None,
+            persisted: false,
+        })
+        .unwrap();
+        tx.send(SteeringMessage {
+            content: "world".into(),
+            sender_id: None,
+            sender_label: None,
+            persisted: false,
+        })
+        .unwrap();
+
+        let msgs = drain_steering(&mut rx);
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].content, "hello");
+        assert_eq!(msgs[1].content, "world");
+
+        // Channel empty now
+        let empty = drain_steering(&mut rx);
+        assert!(empty.is_empty());
     }
 
     #[test]

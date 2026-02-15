@@ -12,7 +12,7 @@ use reqwest::Client;
 use super::error::{LLMError, check_response_error};
 use super::provider::LLMProvider;
 use super::types::{
-    ChatRequest, ChatResponse, ChatStream, FunctionCall, Message, StreamEvent, ToolCall,
+    ChatRequest, ChatResponse, ChatStream, FunctionCall, Message, Role, StreamEvent, ToolCall,
     ToolDefinition, Usage,
 };
 use crate::sse_parser::SseEventStream;
@@ -39,6 +39,7 @@ impl OpenAICompatibleProvider {
 impl LLMProvider for OpenAICompatibleProvider {
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, LLMError> {
         let url = format!("{}/chat/completions", self.base_url);
+        let request = normalize_request(request);
 
         let mut req = self
             .client
@@ -65,6 +66,7 @@ impl LLMProvider for OpenAICompatibleProvider {
 
     async fn chat_stream(&self, request: ChatRequest) -> Result<ChatStream, LLMError> {
         let url = format!("{}/chat/completions", self.base_url);
+        let request = normalize_request(request);
 
         let stream_request = StreamRequest {
             model: request.model,
@@ -104,6 +106,20 @@ impl LLMProvider for OpenAICompatibleProvider {
 
         Ok(Box::pin(event_stream))
     }
+}
+
+fn normalize_request(mut request: ChatRequest) -> ChatRequest {
+    request.messages = request
+        .messages
+        .into_iter()
+        .map(|mut msg| {
+            if msg.role == Role::Steering {
+                msg.role = Role::User;
+            }
+            msg
+        })
+        .collect();
+    request
 }
 
 // ============================================================================

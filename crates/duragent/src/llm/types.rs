@@ -97,6 +97,16 @@ impl Message {
         }
     }
 
+    /// Create a steering message (internal).
+    pub fn steering(content: impl Into<String>) -> Self {
+        Self {
+            role: Role::Steering,
+            content: Some(content.into()),
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
     /// Create an assistant message with tool calls.
     pub fn assistant_tool_calls(tool_calls: Vec<ToolCall>) -> Self {
         Self {
@@ -121,6 +131,8 @@ pub enum Role {
     User,
     Assistant,
     Tool,
+    /// Internal steering message (not user-visible).
+    Steering,
 }
 
 impl std::fmt::Display for Role {
@@ -130,6 +142,7 @@ impl std::fmt::Display for Role {
             Role::User => write!(f, "user"),
             Role::Assistant => write!(f, "assistant"),
             Role::Tool => write!(f, "tool"),
+            Role::Steering => write!(f, "steering"),
         }
     }
 }
@@ -335,11 +348,13 @@ mod tests {
         let user = Role::User;
         let assistant = Role::Assistant;
         let tool = Role::Tool;
+        let steering = Role::Steering;
 
         assert_eq!(serde_json::to_string(&system).unwrap(), "\"system\"");
         assert_eq!(serde_json::to_string(&user).unwrap(), "\"user\"");
         assert_eq!(serde_json::to_string(&assistant).unwrap(), "\"assistant\"");
         assert_eq!(serde_json::to_string(&tool).unwrap(), "\"tool\"");
+        assert_eq!(serde_json::to_string(&steering).unwrap(), "\"steering\"");
 
         assert_eq!(
             serde_json::from_str::<Role>("\"system\"").unwrap(),
@@ -356,6 +371,10 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<Role>("\"tool\"").unwrap(),
             Role::Tool
+        );
+        assert_eq!(
+            serde_json::from_str::<Role>("\"steering\"").unwrap(),
+            Role::Steering
         );
     }
 

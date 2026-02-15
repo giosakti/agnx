@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use super::access::AccessConfig;
 use super::error::{AgentLoadError, AgentLoadWarning};
@@ -48,6 +49,8 @@ pub struct AgentSpec {
     pub tools: Vec<ToolConfig>,
     /// Tool execution policy.
     pub policy: ToolPolicy,
+    /// Tool lifecycle hooks (guards and steering).
+    pub hooks: HooksConfig,
     /// Directory containing the agent's configuration files.
     pub agent_dir: PathBuf,
 }
@@ -225,6 +228,56 @@ pub enum ToolConfig {
     },
 }
 
+/// Configurable hooks for tool lifecycle events.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct HooksConfig {
+    #[serde(default)]
+    pub before_tool: Vec<BeforeToolHook>,
+    #[serde(default)]
+    pub after_tool: Vec<AfterToolHook>,
+}
+
+/// A guard that runs before a tool executes.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BeforeToolHook {
+    /// Tool pattern to match (e.g. "background_process:send_keys", "bash", "web:*").
+    #[serde(rename = "match")]
+    pub tool_match: String,
+    /// The type of guard to apply.
+    #[serde(rename = "type")]
+    pub hook_type: BeforeToolType,
+    /// For `depends_on`: the prior tool:action that must exist.
+    #[serde(default)]
+    pub prior: Option<String>,
+    /// For `depends_on`: argument field that must match between calls.
+    #[serde(default)]
+    pub match_arg: Option<String>,
+    /// For `skip_duplicate`: argument fields that define call identity.
+    #[serde(default)]
+    pub match_args: Vec<String>,
+}
+
+/// The type of before-tool guard.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BeforeToolType {
+    DependsOn,
+    SkipDuplicate,
+}
+
+/// A steering message injected after a tool executes.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AfterToolHook {
+    /// Tool pattern to match (e.g. "background_process:capture").
+    #[serde(rename = "match")]
+    pub tool_match: String,
+    /// Message to inject after successful execution.
+    pub message: String,
+    /// Suppress the message if any key-value pair matches the tool arguments.
+    #[serde(default)]
+    pub unless: HashMap<String, Value>,
+}
+
 /// Check all `ToolConfig::Builtin` entries against `KNOWN_BUILTIN_TOOLS`.
 ///
 /// Returns warnings for any unrecognized builtin tool names (e.g. typos).
@@ -309,6 +362,19 @@ impl AgentSpec {
             ));
         }
 
+        // Merge agent-configured hooks with defaults from enabled tools.
+        let tool_names: Vec<&str> = raw
+            .spec
+            .tools
+            .iter()
+            .filter_map(|t| match t {
+                ToolConfig::Builtin { name } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        let defaults = crate::tools::hooks::default_hooks(&tool_names);
+        let hooks = raw.spec.hooks.with_defaults(defaults);
+
         Ok(AgentSpec {
             api_version: raw.api_version,
             kind: raw.kind,
@@ -323,6 +389,7 @@ impl AgentSpec {
             memory: raw.spec.memory,
             tools: raw.spec.tools,
             policy,
+            hooks,
             agent_dir,
         })
     }
@@ -374,6 +441,8 @@ struct RawAgentSpecBody {
     memory: Option<AgentMemoryConfig>,
     #[serde(default)]
     tools: Vec<ToolConfig>,
+    #[serde(default)]
+    hooks: HooksConfig,
 }
 
 #[cfg(test)]
@@ -399,13 +468,13 @@ mod tests {
         agents_dir: &Path,
         agent_name: &str,
     ) -> crate::store::StorageResult<AgentSpec> {
-        let catalog = FileAgentCatalog::new(agents_dir);
+        let catalog = FileAgentCatalog::new(agents_dir, None);
         catalog.load(agent_name).await
     }
 
     /// Helper to scan agents directory and return warnings.
     async fn scan_agents(agents_dir: &Path) -> crate::store::AgentScanResult {
-        let catalog = FileAgentCatalog::new(agents_dir);
+        let catalog = FileAgentCatalog::new(agents_dir, None);
         catalog.load_all().await.unwrap()
     }
 
@@ -1263,7 +1332,7 @@ spec:
                 name: "bash".to_string(),
             },
             ToolConfig::Builtin {
-                name: "schedule_task".to_string(),
+                name: "schedule".to_string(),
             },
         ];
         let warnings = validate_builtin_tools("test-agent", &tools);
@@ -1299,5 +1368,143 @@ spec:
         }];
         let warnings = validate_builtin_tools("test-agent", &tools);
         assert!(warnings.is_empty());
+    }
+
+    // ------------------------------------------------------------------------
+    // Default hooks auto-injection
+    // ------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn agent_with_memory_tool_gets_default_hooks() {
+        let tmp = TempDir::new().unwrap();
+        let agents_dir = tmp.path().join("agents");
+        std::fs::create_dir(&agents_dir).unwrap();
+
+        let agent_dir = agents_dir.join("hooks-agent");
+        std::fs::create_dir(&agent_dir).unwrap();
+
+        write_yaml(
+            &agent_dir,
+            r#"apiVersion: duragent/v1alpha1
+kind: Agent
+metadata:
+  name: hooks-agent
+spec:
+  model:
+    provider: openrouter
+    name: anthropic/claude-sonnet-4
+  tools:
+    - type: builtin
+      name: memory
+    - type: builtin
+      name: background_process
+"#,
+        );
+
+        let agent = load_agent(&agents_dir, "hooks-agent").await.unwrap();
+
+        // memory default: skip_duplicate on memory:recall
+        assert!(
+            agent
+                .hooks
+                .before_tool
+                .iter()
+                .any(|h| h.tool_match == "memory:recall")
+        );
+
+        // background_process default: depends_on for send_keys
+        assert!(
+            agent
+                .hooks
+                .before_tool
+                .iter()
+                .any(|h| h.tool_match == "background_process:send_keys")
+        );
+
+        // background_process default: after_tool for capture and spawn
+        assert!(
+            agent
+                .hooks
+                .after_tool
+                .iter()
+                .any(|h| h.tool_match == "background_process:capture")
+        );
+        assert!(
+            agent
+                .hooks
+                .after_tool
+                .iter()
+                .any(|h| h.tool_match == "background_process:spawn")
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_explicit_hooks_override_defaults() {
+        let tmp = TempDir::new().unwrap();
+        let agents_dir = tmp.path().join("agents");
+        std::fs::create_dir(&agents_dir).unwrap();
+
+        let agent_dir = agents_dir.join("override-agent");
+        std::fs::create_dir(&agent_dir).unwrap();
+
+        write_yaml(
+            &agent_dir,
+            r#"apiVersion: duragent/v1alpha1
+kind: Agent
+metadata:
+  name: override-agent
+spec:
+  model:
+    provider: openrouter
+    name: anthropic/claude-sonnet-4
+  tools:
+    - type: builtin
+      name: memory
+  hooks:
+    before_tool:
+      - match: "memory:recall"
+        type: skip_duplicate
+        match_args: [days, query]
+"#,
+        );
+
+        let agent = load_agent(&agents_dir, "override-agent").await.unwrap();
+
+        // Only one before_tool hook for memory:recall (agent's override, not default)
+        let recall_hooks: Vec<_> = agent
+            .hooks
+            .before_tool
+            .iter()
+            .filter(|h| h.tool_match == "memory:recall")
+            .collect();
+        assert_eq!(recall_hooks.len(), 1);
+        assert_eq!(recall_hooks[0].match_args, vec!["days", "query"]);
+    }
+
+    #[tokio::test]
+    async fn agent_without_tools_gets_no_default_hooks() {
+        let tmp = TempDir::new().unwrap();
+        let agents_dir = tmp.path().join("agents");
+        std::fs::create_dir(&agents_dir).unwrap();
+
+        let agent_dir = agents_dir.join("no-tools-agent");
+        std::fs::create_dir(&agent_dir).unwrap();
+
+        write_yaml(
+            &agent_dir,
+            r#"apiVersion: duragent/v1alpha1
+kind: Agent
+metadata:
+  name: no-tools-agent
+spec:
+  model:
+    provider: openrouter
+    name: anthropic/claude-sonnet-4
+"#,
+        );
+
+        let agent = load_agent(&agents_dir, "no-tools-agent").await.unwrap();
+        assert!(agent.hooks.before_tool.is_empty());
+        assert!(agent.hooks.after_tool.is_empty());
     }
 }
