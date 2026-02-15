@@ -38,6 +38,14 @@ impl ContextBuilder {
     /// Extracts soul, system_prompt, and instructions as separate blocks
     /// with appropriate priorities.
     pub fn from_agent_spec(mut self, spec: &AgentSpec) -> Self {
+        // Prime directives are always injected first (unconditionally).
+        self.context.add_block(SystemBlock {
+            content: super::prime::PRIME_DIRECTIVES.to_string(),
+            label: "prime_directives".to_string(),
+            source: BlockSource::Runtime,
+            priority: priority::PRIME,
+        });
+
         if let Some(ref soul) = spec.soul {
             self.context.add_block(SystemBlock {
                 content: soul.clone(),
@@ -135,7 +143,7 @@ fn render_skills_block(skills: &[SkillMetadata]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::{AgentMetadata, AgentSessionConfig, ModelConfig, ToolPolicy};
+    use crate::agent::{AgentMetadata, AgentSessionConfig, HooksConfig, ModelConfig, ToolPolicy};
     use crate::llm::{Provider, Role};
     use std::collections::HashMap;
     use std::path::PathBuf;
@@ -170,6 +178,7 @@ mod tests {
             memory: None,
             tools: Vec::new(),
             policy: ToolPolicy::default(),
+            hooks: HooksConfig::default(),
             access: None,
             agent_dir: PathBuf::from("/tmp/test-agent"),
         }
@@ -185,10 +194,14 @@ mod tests {
 
         let ctx = ContextBuilder::new().from_agent_spec(&spec).build();
 
-        assert_eq!(ctx.system_blocks.len(), 3);
+        // prime_directives + soul + system_prompt + instructions
+        assert_eq!(ctx.system_blocks.len(), 4);
 
         let msg = ctx.render_system_message().unwrap();
-        assert_eq!(msg, "I am cheerful.\n\nYou are helpful.\n\nBe concise.");
+        assert!(msg.starts_with("You interact with the world exclusively through tools."));
+        assert!(msg.contains("I am cheerful."));
+        assert!(msg.contains("You are helpful."));
+        assert!(msg.contains("Be concise."));
     }
 
     #[test]
@@ -197,8 +210,10 @@ mod tests {
 
         let ctx = ContextBuilder::new().from_agent_spec(&spec).build();
 
-        assert_eq!(ctx.system_blocks.len(), 1);
-        assert_eq!(ctx.system_blocks[0].label, "system_prompt");
+        // prime_directives + system_prompt
+        assert_eq!(ctx.system_blocks.len(), 2);
+        assert_eq!(ctx.system_blocks[0].label, "prime_directives");
+        assert_eq!(ctx.system_blocks[1].label, "system_prompt");
     }
 
     #[test]
@@ -228,7 +243,8 @@ mod tests {
             })
             .build();
 
-        assert_eq!(ctx.system_blocks.len(), 2);
+        // prime_directives + soul + extra
+        assert_eq!(ctx.system_blocks.len(), 3);
         assert_eq!(ctx.messages.len(), 1);
 
         let msg = ctx.render_system_message().unwrap();
@@ -267,10 +283,10 @@ mod tests {
 
         let ctx = ContextBuilder::new().from_agent_spec(&spec).build();
 
-        // system_prompt + available_skills
-        assert_eq!(ctx.system_blocks.len(), 2);
+        // prime_directives + system_prompt + available_skills
+        assert_eq!(ctx.system_blocks.len(), 3);
 
-        let skills_block = &ctx.system_blocks[1];
+        let skills_block = &ctx.system_blocks[2];
         assert_eq!(skills_block.label, "available_skills");
         assert!(skills_block.content.contains("<available_skills>"));
         assert!(
@@ -292,9 +308,10 @@ mod tests {
 
         let ctx = ContextBuilder::new().from_agent_spec(&spec).build();
 
-        // Only system_prompt, no skills block
-        assert_eq!(ctx.system_blocks.len(), 1);
-        assert_eq!(ctx.system_blocks[0].label, "system_prompt");
+        // prime_directives + system_prompt, no skills block
+        assert_eq!(ctx.system_blocks.len(), 2);
+        assert_eq!(ctx.system_blocks[0].label, "prime_directives");
+        assert_eq!(ctx.system_blocks[1].label, "system_prompt");
     }
 
     #[test]
@@ -307,5 +324,31 @@ mod tests {
 
         assert!(ctx.tool_refs.is_some());
         assert_eq!(ctx.tool_refs.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn prime_directives_always_present() {
+        // Even with empty spec (no soul/system_prompt/instructions)
+        let spec = test_agent_spec(None, None, None);
+
+        let ctx = ContextBuilder::new().from_agent_spec(&spec).build();
+
+        assert_eq!(ctx.system_blocks.len(), 1);
+        let block = &ctx.system_blocks[0];
+        assert_eq!(block.label, "prime_directives");
+        assert_eq!(block.source, BlockSource::Runtime);
+        assert_eq!(block.priority, priority::PRIME);
+    }
+
+    #[test]
+    fn prime_directives_rendered_before_soul() {
+        let spec = test_agent_spec(Some("I am cheerful."), None, None);
+
+        let ctx = ContextBuilder::new().from_agent_spec(&spec).build();
+
+        let msg = ctx.render_system_message().unwrap();
+        let prime_pos = msg.find("## Safety").unwrap();
+        let soul_pos = msg.find("I am cheerful.").unwrap();
+        assert!(prime_pos < soul_pos);
     }
 }

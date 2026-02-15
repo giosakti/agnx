@@ -7,6 +7,7 @@
 
 mod builder;
 mod directives;
+mod prime;
 mod tokens;
 mod truncation;
 
@@ -64,6 +65,8 @@ pub struct SystemBlock {
 /// Source of a system block.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum BlockSource {
+    /// Injected by the runtime (prime directives).
+    Runtime,
     /// From agent YAML spec (soul, system_prompt, instructions).
     AgentSpec,
     /// From overlay file.
@@ -118,6 +121,8 @@ pub struct TokenBudget {
 
 /// Priority constants for system blocks.
 pub mod priority {
+    /// Runtime prime directives (always-on, before all agent content).
+    pub const PRIME: i32 = -100;
     /// Soul (personality) comes first.
     pub const SOUL: i32 = 0;
     /// Core system prompt.

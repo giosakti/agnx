@@ -167,7 +167,7 @@ impl Default for ContextConfig {
 }
 
 fn default_max_history_tokens() -> u32 {
-    20_000
+    40_000
 }
 
 fn default_max_tool_result_tokens() -> u32 {
@@ -1093,7 +1093,7 @@ spec:
     #[test]
     fn context_config_defaults() {
         let config = ContextConfig::default();
-        assert_eq!(config.max_history_tokens, 20_000);
+        assert_eq!(config.max_history_tokens, 40_000);
         assert_eq!(config.max_tool_result_tokens, 8_000);
         assert_eq!(config.tool_result_truncation, ToolResultTruncation::Head);
         assert_eq!(config.tool_result_keep_first, 2);
@@ -1108,7 +1108,7 @@ on_disconnect: pause
 max_tool_iterations: 10
 "#;
         let config: AgentSessionConfig = serde_saphyr::from_str(yaml).unwrap();
-        assert_eq!(config.context.max_history_tokens, 20_000);
+        assert_eq!(config.context.max_history_tokens, 40_000);
         assert_eq!(config.context.max_tool_result_tokens, 8_000);
     }
 
@@ -1214,7 +1214,7 @@ spec:
         );
 
         let agent = load_agent(&agents_dir, "no-context-agent").await.unwrap();
-        assert_eq!(agent.session.context.max_history_tokens, 20_000);
+        assert_eq!(agent.session.context.max_history_tokens, 40_000);
         assert_eq!(agent.session.context.max_tool_result_tokens, 8_000);
         assert_eq!(
             agent.session.context.tool_result_truncation,
