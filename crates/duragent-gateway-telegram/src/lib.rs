@@ -118,7 +118,7 @@ impl TelegramGateway {
         // Send ready event after bot identity check
         let ready_event = GatewayEvent::Ready {
             gateway: "telegram".to_string(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
+            version: duragent_gateway_protocol::PROTOCOL_VERSION.to_string(),
             capabilities: vec![
                 capabilities::MEDIA.to_string(),
                 capabilities::EDIT.to_string(),

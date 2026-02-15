@@ -107,7 +107,7 @@ impl DiscordGateway {
         // Send ready event after client is created successfully
         let ready_event = GatewayEvent::Ready {
             gateway: "discord".to_string(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
+            version: duragent_gateway_protocol::PROTOCOL_VERSION.to_string(),
             capabilities: vec![
                 capabilities::EDIT.to_string(),
                 capabilities::DELETE.to_string(),
