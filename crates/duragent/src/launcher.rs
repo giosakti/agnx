@@ -103,7 +103,7 @@ pub async fn ensure_server_running(opts: LaunchOptions<'_>) -> Result<AgentClien
     spawn_server(opts.config_path, port, opts.agents_dir, &log_path).await?;
 
     // Wait for server to become ready
-    wait_for_ready(&client, DEFAULT_STARTUP_TIMEOUT_SECS, &log_path).await?;
+    wait_for_ready(&client, DEFAULT_STARTUP_TIMEOUT, &log_path).await?;
 
     info!(url = %local_url, "Server ready");
     Ok(client)
@@ -114,7 +114,7 @@ pub async fn ensure_server_running(opts: LaunchOptions<'_>) -> Result<AgentClien
 // ============================================================================
 
 /// Default timeout for waiting for server to become ready.
-const DEFAULT_STARTUP_TIMEOUT_SECS: u64 = 10;
+const DEFAULT_STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Initial polling interval.
 const INITIAL_POLL_INTERVAL_MS: u64 = 100;
@@ -183,14 +183,14 @@ async fn spawn_server(
 }
 
 /// Wait for the server to become ready by polling /readyz.
-async fn wait_for_ready(client: &AgentClient, timeout_secs: u64, log_path: &Path) -> Result<()> {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
+async fn wait_for_ready(client: &AgentClient, timeout: Duration, log_path: &Path) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + timeout;
     let mut interval_ms = INITIAL_POLL_INTERVAL_MS;
 
     loop {
         if tokio::time::Instant::now() >= deadline {
             return Err(LauncherError::StartupTimeout {
-                timeout_secs,
+                timeout_secs: timeout.as_secs(),
                 log_path: log_path.to_path_buf(),
             });
         }

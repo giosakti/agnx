@@ -18,8 +18,8 @@ use teloxide::types::{MediaKind, MessageKind};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-const EVENT_SEND_TIMEOUT_SECS: u64 = 2;
-const EVENT_SEND_WARN_MS: u64 = 200;
+const EVENT_SEND_TIMEOUT: Duration = Duration::from_secs(2);
+const EVENT_SEND_WARN_THRESHOLD: Duration = Duration::from_millis(200);
 
 // ============================================================================
 // Configuration
@@ -450,15 +450,10 @@ async fn send_event(
     context: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let start = Instant::now();
-    match tokio::time::timeout(
-        Duration::from_secs(EVENT_SEND_TIMEOUT_SECS),
-        event_tx.send(event),
-    )
-    .await
-    {
+    match tokio::time::timeout(EVENT_SEND_TIMEOUT, event_tx.send(event)).await {
         Ok(Ok(())) => {
             let elapsed = start.elapsed();
-            if elapsed > Duration::from_millis(EVENT_SEND_WARN_MS) {
+            if elapsed > EVENT_SEND_WARN_THRESHOLD {
                 warn!(
                     context = %context,
                     elapsed_ms = elapsed.as_millis(),

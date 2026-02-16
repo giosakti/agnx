@@ -1,8 +1,8 @@
 use std::time::{Duration, Instant};
 
+use futures::StreamExt;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
-use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, error, warn};
 
@@ -13,8 +13,8 @@ use super::COMPLETION_LOG_TAIL_BYTES;
 
 const CALLBACK_DEDUPE_WINDOW: Duration = Duration::from_secs(2);
 const CALLBACK_DEDUPE_MAX_ENTRIES: usize = 1024;
-const CALLBACK_SEND_TIMEOUT_SECS: u64 = 2;
-const CALLBACK_SEND_WARN_MS: u64 = 200;
+const CALLBACK_SEND_TIMEOUT: Duration = Duration::from_secs(2);
+const CALLBACK_SEND_WARN_THRESHOLD: Duration = Duration::from_millis(200);
 
 pub(crate) fn spawn_callback_workers(
     registry: ProcessRegistryHandle,
@@ -120,13 +120,12 @@ impl ProcessRegistryHandle {
 
     async fn send_callback_task(&self, task: CallbackTask, handle_id: &str) {
         match self.callback_tx.try_send(task) {
-            Ok(()) => return,
+            Ok(()) => {}
             Err(TrySendError::Closed(_)) => {
                 warn!(
                     handle = %handle_id,
                     "Callback queue closed; dropping callback"
                 );
-                return;
             }
             Err(TrySendError::Full(task)) => {
                 warn!(
@@ -134,15 +133,12 @@ impl ProcessRegistryHandle {
                     "Callback queue full; applying backpressure"
                 );
                 let start = Instant::now();
-                let result = tokio::time::timeout(
-                    Duration::from_secs(CALLBACK_SEND_TIMEOUT_SECS),
-                    self.callback_tx.send(task),
-                )
-                .await;
+                let result =
+                    tokio::time::timeout(CALLBACK_SEND_TIMEOUT, self.callback_tx.send(task)).await;
                 match result {
                     Ok(Ok(())) => {
                         let elapsed = start.elapsed();
-                        if elapsed > Duration::from_millis(CALLBACK_SEND_WARN_MS) {
+                        if elapsed > CALLBACK_SEND_WARN_THRESHOLD {
                             warn!(
                                 handle = %handle_id,
                                 elapsed_ms = elapsed.as_millis(),

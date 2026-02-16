@@ -17,7 +17,7 @@ use tracing::{debug, error, info, warn};
 /// Default timeout for message handler execution (5 minutes).
 const DEFAULT_MESSAGE_HANDLER_TIMEOUT: Duration = Duration::from_secs(300);
 const GATEWAY_COMMAND_SEND_TIMEOUT: Duration = Duration::from_secs(2);
-const GATEWAY_COMMAND_SEND_WARN_MS: u64 = 200;
+const GATEWAY_COMMAND_SEND_WARN_THRESHOLD: Duration = Duration::from_millis(200);
 
 use duragent_gateway_protocol::{
     GatewayCommand, GatewayEvent, InlineButton, InlineKeyboard, MessageReceivedData,
@@ -705,7 +705,7 @@ async fn send_gateway_command(
     match tokio::time::timeout(GATEWAY_COMMAND_SEND_TIMEOUT, tx.send(command)).await {
         Ok(Ok(())) => {
             let elapsed = start.elapsed();
-            if elapsed > Duration::from_millis(GATEWAY_COMMAND_SEND_WARN_MS) {
+            if elapsed > GATEWAY_COMMAND_SEND_WARN_THRESHOLD {
                 warn!(
                     gateway = %gateway,
                     command = %kind,

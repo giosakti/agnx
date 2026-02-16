@@ -1,12 +1,11 @@
 use std::io::SeekFrom;
 use std::path::Path;
-use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, BufReader};
 
 use crate::process::{ProcessError, ProcessMeta, ProcessRegistryHandle};
 
-use super::STDIN_WRITE_TIMEOUT_SECS;
+use super::STDIN_WRITE_TIMEOUT;
 
 impl ProcessRegistryHandle {
     /// List all processes for a given session.
@@ -186,16 +185,15 @@ impl ProcessRegistryHandle {
         };
 
         use tokio::io::AsyncWriteExt;
-        let write_result =
-            tokio::time::timeout(Duration::from_secs(STDIN_WRITE_TIMEOUT_SECS), async {
-                stdin_handle
-                    .write_all(input.as_bytes())
-                    .await
-                    .map_err(ProcessError::Io)?;
-                stdin_handle.flush().await.map_err(ProcessError::Io)?;
-                Ok::<(), ProcessError>(())
-            })
-            .await;
+        let write_result = tokio::time::timeout(STDIN_WRITE_TIMEOUT, async {
+            stdin_handle
+                .write_all(input.as_bytes())
+                .await
+                .map_err(ProcessError::Io)?;
+            stdin_handle.flush().await.map_err(ProcessError::Io)?;
+            Ok::<(), ProcessError>(())
+        })
+        .await;
 
         let result = match write_result {
             Ok(res) => res,

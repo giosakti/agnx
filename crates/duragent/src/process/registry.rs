@@ -19,7 +19,7 @@ use crate::context::{ContextBuilder, TokenBudget, load_all_directives_async};
 use crate::gateway::{GatewaySender, build_approval_keyboard};
 use crate::server::RuntimeServices;
 use crate::session::{
-    AGENTIC_LOOP_LOCK_TIMEOUT_SECS, AgenticResult, STEERING_CHANNEL_CAPACITY, SteeringMessage,
+    AGENTIC_LOOP_LOCK_TIMEOUT, AgenticResult, STEERING_CHANNEL_CAPACITY, SteeringMessage,
     run_agentic_loop,
 };
 use crate::tools::{ReloadDeps, ToolDependencies, build_executor_async};
@@ -43,8 +43,8 @@ const WAIT_LOG_TAIL_BYTES: usize = 8 * 1024;
 
 /// Default cleanup age for completed processes (30 minutes).
 const DEFAULT_CLEANUP_AGE_SECS: u64 = 30 * 60;
-/// Default timeout for stdin writes to child processes (seconds).
-const STDIN_WRITE_TIMEOUT_SECS: u64 = 10;
+/// Default timeout for stdin writes to child processes.
+const STDIN_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Worker count for processing callback tasks.
 const CALLBACK_WORKER_COUNT: usize = 4;
 /// Capacity for the callback task queue.
@@ -630,21 +630,17 @@ impl ProcessRegistryHandle {
         // We acquire BEFORE building context so we always have fresh state —
         // if another loop was running, we'll see its events in our context.
         let loop_lock = self.services.agentic_loop_locks.get(&meta.session_id);
-        let _loop_guard = match tokio::time::timeout(
-            Duration::from_secs(AGENTIC_LOOP_LOCK_TIMEOUT_SECS),
-            loop_lock.lock(),
-        )
-        .await
-        {
-            Ok(guard) => guard,
-            Err(_) => {
-                warn!(
-                    session_id = %meta.session_id,
-                    "Timed out waiting for agentic loop lock"
-                );
-                return Ok(());
-            }
-        };
+        let _loop_guard =
+            match tokio::time::timeout(AGENTIC_LOOP_LOCK_TIMEOUT, loop_lock.lock()).await {
+                Ok(guard) => guard,
+                Err(_) => {
+                    warn!(
+                        session_id = %meta.session_id,
+                        "Timed out waiting for agentic loop lock"
+                    );
+                    return Ok(());
+                }
+            };
 
         // Build tool executor (after lock to pick up latest policy)
         let policy = self.services.policy_store.load(&meta.agent).await;

@@ -11,7 +11,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
-use tokio::time::{Duration, Instant};
+use tokio::time::Instant;
 use tracing::{debug, error, warn};
 
 use duragent_gateway_protocol::{
@@ -38,7 +38,7 @@ use crate::process::ProcessRegistryHandle;
 use crate::scheduler::SchedulerHandle;
 use crate::server::RuntimeServices;
 use crate::session::{
-    AGENTIC_LOOP_LOCK_TIMEOUT_SECS, AgenticResult, ChatSessionCache, STEERING_CHANNEL_CAPACITY,
+    AGENTIC_LOOP_LOCK_TIMEOUT, AgenticResult, ChatSessionCache, STEERING_CHANNEL_CAPACITY,
     SessionHandle, SteeringMessage, run_agentic_loop,
 };
 use crate::sync::KeyedLocks;
@@ -476,7 +476,6 @@ impl GatewayMessageHandler {
             return self
                 .process_text_message_agentic(
                     gateway,
-                    &routing.chat_id,
                     handle,
                     text,
                     &sender.id,
@@ -620,13 +619,13 @@ impl GatewayMessageHandler {
     async fn process_text_message_agentic(
         &self,
         gateway: &str,
-        chat_id: &str,
         handle: &SessionHandle,
         text: &str,
         sender_id: &str,
         sender_label: Option<String>,
         routing: &RoutingContext,
     ) -> Option<String> {
+        let chat_id = &routing.chat_id;
         let agent = self.services.agents.get(handle.agent())?;
 
         // If a loop is already running, steer and return immediately.
@@ -751,22 +750,18 @@ impl GatewayMessageHandler {
 
         // Acquire per-session agentic loop lock to prevent concurrent loops
         let loop_lock = self.services.agentic_loop_locks.get(handle.id());
-        let _loop_guard = match tokio::time::timeout(
-            Duration::from_secs(AGENTIC_LOOP_LOCK_TIMEOUT_SECS),
-            loop_lock.lock(),
-        )
-        .await
-        {
-            Ok(guard) => guard,
-            Err(_) => {
-                self.services.steering_channels.remove(handle.id());
-                warn!(
-                    session_id = %handle.id(),
-                    "Timed out waiting for agentic loop lock"
-                );
-                return Some("Session busy. Please retry in a moment.".to_string());
-            }
-        };
+        let _loop_guard =
+            match tokio::time::timeout(AGENTIC_LOOP_LOCK_TIMEOUT, loop_lock.lock()).await {
+                Ok(guard) => guard,
+                Err(_) => {
+                    self.services.steering_channels.remove(handle.id());
+                    warn!(
+                        session_id = %handle.id(),
+                        "Timed out waiting for agentic loop lock"
+                    );
+                    return Some("Session busy. Please retry in a moment.".to_string());
+                }
+            };
 
         // Run agentic loop
         let result = match run_agentic_loop(
