@@ -1,3 +1,4 @@
+use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
@@ -9,7 +10,7 @@ use tracing::{debug, error, warn};
 use crate::process::{CallbackKey, CallbackKind, CallbackTask, ProcessRegistryHandle};
 use crate::session::SteeringMessage;
 
-use super::COMPLETION_LOG_TAIL_BYTES;
+use super::{CALLBACK_DEDUPE_SHARDS, COMPLETION_LOG_TAIL_BYTES};
 
 const CALLBACK_DEDUPE_WINDOW: Duration = Duration::from_secs(2);
 const CALLBACK_DEDUPE_MAX_ENTRIES: usize = 1024;
@@ -165,7 +166,8 @@ impl ProcessRegistryHandle {
 
     async fn should_enqueue_callback(&self, key: CallbackKey) -> bool {
         let now = Instant::now();
-        let mut map = self.callback_dedupe.lock().await;
+        let shard = callback_dedupe_shard(&key);
+        let mut map = self.callback_dedupe[shard].lock().await;
         if let Some(last) = map.get(&key)
             && now.duration_since(*last) < CALLBACK_DEDUPE_WINDOW
         {
@@ -405,4 +407,10 @@ impl ProcessRegistryHandle {
             );
         }
     }
+}
+
+fn callback_dedupe_shard(key: &CallbackKey) -> usize {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut hasher);
+    (hasher.finish() as usize) % CALLBACK_DEDUPE_SHARDS
 }

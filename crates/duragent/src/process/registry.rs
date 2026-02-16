@@ -49,6 +49,8 @@ const STDIN_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const CALLBACK_WORKER_COUNT: usize = 4;
 /// Capacity for the callback task queue.
 const CALLBACK_QUEUE_CAPACITY: usize = 128;
+/// Shard count for callback deduplication map.
+const CALLBACK_DEDUPE_SHARDS: usize = 16;
 
 // ============================================================================
 // Public types
@@ -116,7 +118,11 @@ impl ProcessRegistryHandle {
             backends: Arc::new(ProcessBackends::new(tmux_available)),
             scheduler,
             callback_tx,
-            callback_dedupe: Arc::new(Mutex::new(HashMap::new())),
+            callback_dedupe: Arc::new(
+                (0..CALLBACK_DEDUPE_SHARDS)
+                    .map(|_| Mutex::new(HashMap::new()))
+                    .collect(),
+            ),
         };
 
         callbacks::spawn_callback_workers(registry.clone(), callback_rx, CALLBACK_WORKER_COUNT);

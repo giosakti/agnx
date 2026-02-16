@@ -49,8 +49,8 @@ pub struct ProcessRegistryHandle {
     pub(crate) scheduler: Option<SchedulerHandle>,
     /// Queue for callback tasks (completion + screen-halted).
     pub(crate) callback_tx: mpsc::Sender<CallbackTask>,
-    /// Deduplication for callback bursts.
-    pub(crate) callback_dedupe: Arc<Mutex<HashMap<CallbackKey, Instant>>>,
+    /// Deduplication for callback bursts (sharded to reduce contention).
+    pub(crate) callback_dedupe: Arc<Vec<Mutex<HashMap<CallbackKey, Instant>>>>,
 }
 
 // ============================================================================
@@ -112,6 +112,19 @@ pub enum ProcessError {
 }
 
 // ============================================================================
+// ProcessBackendKind
+// ============================================================================
+
+/// Backend type for a process.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProcessBackendKind {
+    #[default]
+    Local,
+    Tmux,
+}
+
+// ============================================================================
 // ProcessStatus
 // ============================================================================
 
@@ -125,19 +138,6 @@ pub enum ProcessStatus {
     Lost,
     TimedOut,
     Killed,
-}
-
-// ============================================================================
-// ProcessBackendKind
-// ============================================================================
-
-/// Backend type for a process.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProcessBackendKind {
-    #[default]
-    Local,
-    Tmux,
 }
 
 impl ProcessStatus {
