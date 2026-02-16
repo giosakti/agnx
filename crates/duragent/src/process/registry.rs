@@ -3,12 +3,14 @@
 //! Manages the lifecycle of background processes: spawning, monitoring,
 //! completion callbacks, crash recovery, and cleanup.
 
+use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
 use dashmap::DashMap;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
@@ -24,8 +26,10 @@ use super::tmux;
 use super::{ProcessEntry, ProcessError, ProcessMeta, ProcessRegistryHandle, ProcessStatus};
 use super::{SpawnResult, WaitResult};
 
-/// Maximum chars of log output to include in completion callbacks.
-const COMPLETION_LOG_TAIL: usize = 2000;
+/// Maximum bytes of log output to include in completion callbacks.
+const COMPLETION_LOG_TAIL_BYTES: usize = 2000;
+/// Maximum bytes of log output to include in wait results.
+const WAIT_LOG_TAIL_BYTES: usize = 8 * 1024;
 
 /// Default cleanup age for completed processes (30 minutes).
 const DEFAULT_CLEANUP_AGE_SECS: u64 = 30 * 60;
@@ -334,16 +338,28 @@ impl ProcessRegistryHandle {
         let log_path = entry.meta.log_path.clone();
         drop(entry);
 
-        let content = tokio::fs::read_to_string(&log_path)
+        let file = tokio::fs::File::open(&log_path)
             .await
-            .unwrap_or_default();
+            .map_err(ProcessError::Io)?;
+        let mut lines = BufReader::new(file).lines();
+        let mut index = 0usize;
+        let mut collected = 0usize;
+        let mut selected = String::new();
 
-        let selected: String = content
-            .lines()
-            .skip(offset)
-            .take(limit)
-            .collect::<Vec<_>>()
-            .join("\n");
+        while let Some(line) = lines.next_line().await.map_err(ProcessError::Io)? {
+            if index >= offset {
+                if collected >= limit {
+                    break;
+                }
+                if !selected.is_empty() {
+                    selected.push('\n');
+                }
+                selected.push_str(&line);
+                collected += 1;
+            }
+            index += 1;
+        }
+
         Ok(selected)
     }
 
@@ -722,12 +738,10 @@ impl ProcessRegistryHandle {
         };
 
         // Read tail of log for the completion message
-        let log_tail = match tokio::fs::read_to_string(&meta.log_path).await {
-            Ok(content) => {
-                if content.len() > COMPLETION_LOG_TAIL {
-                    let start = content.len().saturating_sub(COMPLETION_LOG_TAIL);
-                    let start = content.floor_char_boundary(start);
-                    format!("...\n{}", &content[start..])
+        let log_tail = match Self::read_log_tail(&meta.log_path, COMPLETION_LOG_TAIL_BYTES).await {
+            Ok((content, truncated)) => {
+                if truncated {
+                    format!("...\n{}", content)
                 } else {
                     content
                 }
@@ -752,14 +766,14 @@ impl ProcessRegistryHandle {
              {}\n\
              Command: {}\n\
              Status: {}\n\
-             Duration: {}s\n\n\
-             Output (last {} chars):\n{}",
+            Duration: {}s\n\n\
+             Output (last {} bytes):\n{}",
             meta.handle,
             label_str,
             meta.command,
             meta.status,
             duration,
-            COMPLETION_LOG_TAIL,
+            COMPLETION_LOG_TAIL_BYTES,
             log_tail,
         );
 
@@ -1022,6 +1036,27 @@ impl ProcessRegistryHandle {
         }
     }
 
+    async fn read_log_tail(path: &Path, max_bytes: usize) -> std::io::Result<(String, bool)> {
+        let mut file = tokio::fs::File::open(path).await?;
+        let metadata = file.metadata().await?;
+        let len = metadata.len();
+        let start = len.saturating_sub(max_bytes as u64);
+        let truncated = start > 0;
+
+        file.seek(SeekFrom::Start(start)).await?;
+        let mut buf = Vec::with_capacity((len - start) as usize);
+        file.read_to_end(&mut buf).await?;
+        let mut content = String::from_utf8_lossy(&buf).to_string();
+
+        if truncated {
+            if let Some(pos) = content.find('\n') {
+                content = content[(pos + 1)..].to_string();
+            }
+        }
+
+        Ok((content, truncated))
+    }
+
     async fn wait_for_child(
         &self,
         mut child: tokio::process::Child,
@@ -1050,8 +1085,15 @@ impl ProcessRegistryHandle {
         };
 
         let duration = start.elapsed().as_secs();
-        let output = tokio::fs::read_to_string(log_path)
+        let output = Self::read_log_tail(log_path, WAIT_LOG_TAIL_BYTES)
             .await
+            .map(|(content, truncated)| {
+                if truncated {
+                    format!("...\n{}", content)
+                } else {
+                    content
+                }
+            })
             .unwrap_or_default();
 
         // Update registry
@@ -1098,8 +1140,15 @@ impl ProcessRegistryHandle {
         };
 
         let duration = start.elapsed().as_secs();
-        let output = tokio::fs::read_to_string(log_path)
+        let output = Self::read_log_tail(log_path, WAIT_LOG_TAIL_BYTES)
             .await
+            .map(|(content, truncated)| {
+                if truncated {
+                    format!("...\n{}", content)
+                } else {
+                    content
+                }
+            })
             .unwrap_or_default();
 
         let exit_code = if timed_out {
