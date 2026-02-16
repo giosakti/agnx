@@ -763,8 +763,51 @@ impl ProcessRegistryHandle {
             log_tail,
         );
 
+        // Try to steer into a running agentic loop first
+        if let Some(tx) = self.services.steering_channels.get(&meta.session_id) {
+            let mut persisted = false;
+            if let Some(handle) = self.services.session_registry.get(&meta.session_id)
+                && handle
+                    .add_user_message(completion_message.clone())
+                    .await
+                    .is_ok()
+            {
+                persisted = true;
+            }
+            let steering_msg = SteeringMessage {
+                content: completion_message.clone(),
+                sender_id: None,
+                sender_label: None,
+                persisted,
+            };
+            if tx.send(steering_msg).is_ok() {
+                return;
+            }
+
+            // Channel closed — loop just ended. Fall through to run_callback.
+            let persist_on_fallback = !persisted;
+            if let Err(e) = self
+                .run_callback(
+                    &meta,
+                    &gateway,
+                    &chat_id,
+                    &completion_message,
+                    None,
+                    persist_on_fallback,
+                )
+                .await
+            {
+                error!(
+                    handle = %handle_id,
+                    error = %e,
+                    "Failed to fire completion callback"
+                );
+            }
+            return;
+        }
+
         if let Err(e) = self
-            .run_callback(&meta, &gateway, &chat_id, &completion_message, None)
+            .run_callback(&meta, &gateway, &chat_id, &completion_message, None, true)
             .await
         {
             error!(
@@ -908,18 +951,48 @@ impl ProcessRegistryHandle {
             {
                 persisted = true;
             }
-            let _ = tx.send(SteeringMessage {
-                content: message,
+            let steering_msg = SteeringMessage {
+                content: message.clone(),
                 sender_id: None,
                 sender_label: None,
                 persisted,
-            });
+            };
+            if tx.send(steering_msg).is_ok() {
+                return;
+            }
+
+            // Channel closed — loop just ended. Fall through to run_callback.
+            let persist_on_fallback = !persisted;
+            if let Err(e) = self
+                .run_callback(
+                    &meta,
+                    &gateway,
+                    &chat_id,
+                    &message,
+                    Some(self.clone()),
+                    persist_on_fallback,
+                )
+                .await
+            {
+                error!(
+                    handle = %handle_id,
+                    error = %e,
+                    "Failed to fire screen halted callback"
+                );
+            }
             return;
         }
 
         // No running loop — run our own
         if let Err(e) = self
-            .run_callback(&meta, &gateway, &chat_id, &message, Some(self.clone()))
+            .run_callback(
+                &meta,
+                &gateway,
+                &chat_id,
+                &message,
+                Some(self.clone()),
+                true,
+            )
             .await
         {
             error!(
@@ -1063,6 +1136,7 @@ impl ProcessRegistryHandle {
     /// When `process_registry` is `Some`, the agent will have access to
     /// process tools (needed for screen-halted callbacks where the agent
     /// must interact with the process). Completion callbacks pass `None`.
+    /// `persist_message` skips re-persisting if the callback was already stored.
     async fn run_callback(
         &self,
         meta: &ProcessMeta,
@@ -1070,6 +1144,7 @@ impl ProcessRegistryHandle {
         chat_id: &str,
         message: &str,
         process_registry: Option<ProcessRegistryHandle>,
+        persist_message: bool,
     ) -> anyhow::Result<()> {
         // Get agent
         let agent = self
@@ -1093,8 +1168,10 @@ impl ProcessRegistryHandle {
             .get(&meta.session_id)
             .ok_or_else(|| anyhow::anyhow!("Session not found: {}", meta.session_id))?;
 
-        // Persist the callback message
-        handle.add_user_message(message.to_string()).await?;
+        // Persist the callback message (unless already persisted upstream)
+        if persist_message {
+            handle.add_user_message(message.to_string()).await?;
+        }
 
         // Acquire per-session agentic loop lock (blocks until available).
         // We acquire BEFORE building context so we always have fresh state —
