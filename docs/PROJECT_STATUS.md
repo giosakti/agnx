@@ -109,6 +109,13 @@ Key specs and design docs:
 - [x] Build variant exposed in `build_info::VARIANT` and `/version` endpoint
 - [x] Checksum verification bugfix in `duragent upgrade`
 
+### v0.5.2 — Onboarding & Agent Management ✓
+- [x] `duragent agent create` command (scaffold new agents in existing workspaces)
+- [x] Workspace/agent policy templates (deny list + ask mode)
+- [x] Safer defaults (127.0.0.1 bind, memory/bash/web enabled, `{{date}}` syntax)
+- [x] Better error messages (`duragent chat` lists available agents on failure)
+- [x] Credential hints after `duragent init`
+
 ### v0.6.0 — Observability & Sandbox
 - [ ] Structured logging improvements
 - [ ] Metrics (OpenTelemetry)
