@@ -1,11 +1,23 @@
 # Installation
 
-## Requirements
+## Prebuilt Binaries
 
-- Rust 1.85+ (stable toolchain)
-- Linux, macOS, or Windows
+Download the latest release from [GitHub Releases](https://github.com/giosakti/duragent/releases):
+
+- **Full package** — built-in gateway integrations (Telegram, Discord)
+- **Core package** — just the `duragent` binary
+
+Extract the archive and place the binary in your `PATH`:
+
+```bash
+tar xzf duragent-*.tar.gz
+sudo mv duragent /usr/local/bin/
+duragent --version
+```
 
 ## From Source
+
+Requirements: Rust 1.85+ (stable toolchain)
 
 ```bash
 git clone https://github.com/giosakti/duragent.git
@@ -24,16 +36,4 @@ cargo install --git https://github.com/giosakti/duragent.git
 
 ```bash
 duragent --version
-```
-
-## Gateway Plugins
-
-Gateway plugins (Telegram, Discord) are separate binaries. To install them:
-
-```bash
-# Discord gateway
-cargo install --git https://github.com/giosakti/duragent.git duragent-gateway-discord
-
-# Telegram gateway
-cargo install --git https://github.com/giosakti/duragent.git duragent-gateway-telegram
 ```

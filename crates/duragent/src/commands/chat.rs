@@ -29,10 +29,21 @@ pub async fn run(
     .context("Failed to connect to server")?;
 
     // Get agent info to display model details
-    let agent = client
-        .get_agent(agent_name)
-        .await
-        .with_context(|| format!("Failed to get agent '{}'", agent_name))?;
+    let agent = match client.get_agent(agent_name).await {
+        Ok(a) => a,
+        Err(_) => {
+            let mut msg = format!("Failed to get agent '{agent_name}'.");
+            if let Ok(agents) = client.list_agents().await {
+                if agents.is_empty() {
+                    msg.push_str(" No agents found in this workspace.");
+                } else {
+                    let names: Vec<&str> = agents.iter().map(|a| a.name.as_str()).collect();
+                    msg.push_str(&format!(" Available agents: {}", names.join(", ")));
+                }
+            }
+            anyhow::bail!(msg);
+        }
+    };
 
     // Create a new session
     let session = client

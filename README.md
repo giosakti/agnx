@@ -32,14 +32,13 @@ duragent init
 # Follow the interactive setup
 ```
 
-### 2. Set up your API key and start the server
+### 2. Authenticate
 
 ```bash
 export OPENROUTER_API_KEY=your-key  # or: duragent login anthropic
-duragent serve
 ```
 
-### 3. Chat with your agent
+### 3. Chat with your agent (server starts automatically)
 
 ```bash
 duragent chat --agent <YOUR_AGENT_NAME>

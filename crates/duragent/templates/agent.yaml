@@ -28,17 +28,18 @@ spec:
     on_disconnect: pause         # pause | continue
     # ttl_hours: 168             # per-agent override (0 to disable)
     # compaction: discard        # per-agent override: discard | archive | disabled
-    # max_tool_iterations: 10
+    # max_tool_iterations: 20
+    # llm_timeout_seconds: 300
     # context:
-    #   max_history_tokens: 20000
+    #   max_history_tokens: 40000
     #   max_tool_result_tokens: 8000
     #   tool_result_truncation: head   # head | tail | both
     #   tool_result_keep_first: 2
     #   tool_result_keep_last: 5
 
   # Persistent memory
-  # memory:
-  #   backend: filesystem
+  memory:
+    backend: filesystem
 
   # Access control (for gateway integrations)
   # access:
@@ -81,11 +82,11 @@ spec:
   #         wait: true
 
   # Tools
-  # tools:
-  #   - type: builtin
-  #     name: bash
-  #   - type: builtin
-  #     name: web
+  tools:
+    - type: builtin
+      name: bash
+    - type: builtin
+      name: web             # web search requires BRAVE_API_KEY env var; web fetch works without it
   #   - type: builtin
   #     name: schedule
   #   - type: builtin
@@ -98,3 +99,6 @@ spec:
   #     name: my-tool
   #     command: ./tools/my-tool.sh
   #     description: Runs my custom tool
+
+  # Skills directory (modular Markdown-based capabilities)
+  # skills_dir: ./skills/

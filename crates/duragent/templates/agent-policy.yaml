@@ -1,0 +1,44 @@
+apiVersion: duragent/v1alpha1
+kind: Policy
+
+# Ask mode: allow-listed tools run without approval, everything else asks.
+mode: ask
+
+allow:
+  # Memory tools — always safe
+  - "builtin:memory:recall"
+  - "builtin:memory:remember"
+  - "builtin:memory:reflect"
+  - "builtin:memory:update_world"
+
+  # Read-only tools
+  - "builtin:web:search"
+  - "builtin:web:fetch"
+  - "builtin:schedule:list"
+  - "builtin:session:*"
+  - "builtin:reload_tools"
+
+  # Safe bash commands
+  - "bash:ls"
+  - "bash:ls *"
+  - "bash:cat *"
+  - "bash:head *"
+  - "bash:tail *"
+  - "bash:wc *"
+  - "bash:find *"
+  - "bash:grep *"
+  - "bash:rg *"
+  - "bash:fd *"
+  - "bash:pwd"
+  - "bash:date*"
+  - "bash:echo *"
+  - "bash:which *"
+  - "bash:whoami"
+  - "bash:uname *"
+  - "bash:env"
+  - "bash:printenv*"
+  - "bash:git status*"
+  - "bash:git log*"
+  - "bash:git diff*"
+  - "bash:git show*"
+  - "bash:git branch*"

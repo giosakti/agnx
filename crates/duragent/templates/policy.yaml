@@ -1,0 +1,42 @@
+apiVersion: duragent/v1alpha1
+kind: Policy
+
+# Workspace-level deny list — blocks dangerous commands for all agents.
+# Agent-level policy.yaml can add allow rules on top.
+
+deny:
+  # Catastrophic filesystem destruction
+  - "bash:rm -rf /*"
+  - "bash:rm -rf /"
+  - "bash:rm -rf ~*"
+  - "bash:*mkfs*"
+  - "bash:*dd if=*of=/dev/*"
+  - "bash:*> /dev/*"
+
+  # Path traversal
+  - "bash:*../*"
+
+  # Privilege escalation
+  - "bash:*sudo*"
+  - "bash:su *"
+  - "bash:*chmod +s*"
+  - "bash:*chmod 777*"
+
+  # System control
+  - "bash:shutdown*"
+  - "bash:reboot*"
+  - "bash:halt*"
+  - "bash:poweroff*"
+  - "bash:crontab*"
+
+  # Sensitive files
+  - "bash:*/.ssh/*"
+  - "bash:*/etc/shadow*"
+
+  # Network listeners
+  - "bash:nc -l*"
+  - "bash:ncat -l*"
+
+  # Remote code execution
+  - "bash:*curl*|*bash*"
+  - "bash:*wget*|*bash*"

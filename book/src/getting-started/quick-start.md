@@ -1,6 +1,6 @@
 # Quick Start
 
-This guide walks you through creating your first agent, starting the server, and chatting with it.
+This guide walks you through creating your first agent and chatting with it.
 
 ## 1. Initialize a Workspace
 
@@ -11,20 +11,16 @@ duragent init
 
 This creates a `.duragent/` directory with a starter agent and configuration.
 
-## 2. Authenticate and Start the Server
+## 2. Authenticate
 
-Set up credentials for your LLM provider, then start the server:
+Set up credentials for your LLM provider:
 
 ```bash
-# Option A: OAuth login (Anthropic only — tokens auto-refresh)
-duragent login anthropic
-
-# Option B: API key via environment variable
+# Option A: API key via environment variable
 export OPENROUTER_API_KEY=your-key
-```
 
-```bash
-duragent serve
+# Option B: OAuth login (Anthropic only — tokens auto-refresh)
+duragent login anthropic
 ```
 
 See [Authentication](../guides/authentication.md) for details on all providers.
@@ -35,11 +31,13 @@ See [Authentication](../guides/authentication.md) for details on all providers.
 duragent chat --agent <YOUR_AGENT_NAME>
 ```
 
-Type your message and press Enter. The agent will respond using the configured LLM.
+The server starts automatically. Type your message and press Enter.
+
+Press `Ctrl+C` or type `/exit` to detach from the session.
 
 ## 4. Attach to a Session Later
 
-Sessions are durable — you can disconnect and reconnect at any time:
+Sessions are durable — detaching doesn't lose your conversation. Reconnect at any time:
 
 ```bash
 duragent attach --list       # List attachable sessions

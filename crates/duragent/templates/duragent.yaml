@@ -2,12 +2,14 @@
 # See: https://github.com/giosakti/duragent
 
 server:
-  host: 0.0.0.0
+  host: 127.0.0.1
   port: 8080
+  # max_connections: 1024
   # request_timeout_seconds: 300
   # idle_timeout_seconds: 60
   # keep_alive_interval_seconds: 15
   # admin_token: ${DURAGENT_ADMIN_TOKEN:-}
+  # api_token: ${DURAGENT_API_TOKEN:-}
 
 # Session lifecycle
 # sessions:

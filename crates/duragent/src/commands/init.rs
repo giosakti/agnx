@@ -14,7 +14,9 @@ use duragent::config::{
 // ============================================================================
 
 const TEMPLATE_DURAGENT_YAML: &str = include_str!("../../templates/duragent.yaml");
+const TEMPLATE_POLICY_YAML: &str = include_str!("../../templates/policy.yaml");
 const TEMPLATE_AGENT_YAML: &str = include_str!("../../templates/agent.yaml");
+const TEMPLATE_AGENT_POLICY_YAML: &str = include_str!("../../templates/agent-policy.yaml");
 const TEMPLATE_SOUL: &str = include_str!("../../templates/SOUL.md");
 const TEMPLATE_SYSTEM_PROMPT: &str = include_str!("../../templates/SYSTEM_PROMPT.md");
 
@@ -94,7 +96,9 @@ async fn init_at(root: &Path, agent_name: &str, provider: &str, model: &str) -> 
 
     let files: &[(&Path, &str)] = &[
         (&root.join("duragent.yaml"), TEMPLATE_DURAGENT_YAML),
+        (&workspace.join("policy.yaml"), TEMPLATE_POLICY_YAML),
         (&agent_dir.join("agent.yaml"), &agent_yaml),
+        (&agent_dir.join("policy.yaml"), TEMPLATE_AGENT_POLICY_YAML),
         (&agent_dir.join("SOUL.md"), TEMPLATE_SOUL),
         (&agent_dir.join("SYSTEM_PROMPT.md"), TEMPLATE_SYSTEM_PROMPT),
     ];
@@ -127,9 +131,21 @@ async fn init_at(root: &Path, agent_name: &str, provider: &str, model: &str) -> 
 
     println!();
     println!("Workspace initialized! Next steps:");
-    println!("  1. Edit .duragent/agents/{agent_name}/SOUL.md to define agent personality");
-    println!("  2. Edit .duragent/agents/{agent_name}/SYSTEM_PROMPT.md to define agent task");
-    println!("  3. Run: duragent chat --agent {agent_name}");
+
+    let step = match provider {
+        "anthropic" => "  1. Run: duragent login anthropic",
+        "openrouter" => "  1. Run: export OPENROUTER_API_KEY=your-key",
+        "openai" => "  1. Run: export OPENAI_API_KEY=your-key",
+        _ => "", // ollama and others need no credential step
+    };
+    if !step.is_empty() {
+        println!("{step}");
+    }
+
+    let chat_step = if step.is_empty() { "1" } else { "2" };
+    println!("  {chat_step}. Run: duragent chat --agent {agent_name}");
+    println!();
+    println!("Optional: export BRAVE_API_KEY=your-key  # enables web search");
 
     Ok(())
 }
@@ -202,6 +218,13 @@ mod tests {
         assert!(agent.contains("provider: openrouter"));
         assert!(agent.contains("name: anthropic/claude-sonnet-4"));
 
+        let workspace_policy = std::fs::read_to_string(root.join(".duragent/policy.yaml")).unwrap();
+        assert!(workspace_policy.contains("deny:"));
+
+        let agent_policy =
+            std::fs::read_to_string(root.join(".duragent/agents/test-bot/policy.yaml")).unwrap();
+        assert!(agent_policy.contains("mode: ask"));
+
         let soul = std::fs::read_to_string(root.join(".duragent/agents/test-bot/SOUL.md")).unwrap();
         assert!(soul.contains("helpful assistant"));
 
@@ -245,6 +268,7 @@ mod tests {
             .unwrap();
 
         assert!(root.join(".duragent/agents/code-bot/agent.yaml").exists());
+        assert!(root.join(".duragent/agents/code-bot/policy.yaml").exists());
         assert!(root.join(".duragent/agents/code-bot/SOUL.md").exists());
         assert!(
             root.join(".duragent/agents/code-bot/SYSTEM_PROMPT.md")
