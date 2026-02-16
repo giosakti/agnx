@@ -75,6 +75,8 @@ struct SessionQueueInner {
     pending: VecDeque<QueuedMessage>,
     /// Per-sender debounce buffers (sender_id -> accumulated messages).
     debounce_buffers: HashMap<String, Vec<QueuedMessage>>,
+    /// Total messages across all debounce buffers (O(1) capacity checks).
+    debounce_buffered: usize,
 }
 
 /// Per-session message queue with atomic busy/enqueue/drain operations.
@@ -91,6 +93,7 @@ impl SessionMessageQueue {
                 busy: false,
                 pending: VecDeque::new(),
                 debounce_buffers: HashMap::new(),
+                debounce_buffered: 0,
             }),
             wake: Notify::new(),
         }
@@ -134,29 +137,35 @@ impl SessionMessageQueue {
     ///
     /// If the queue is empty (or mode is Drop), marks the session as idle.
     pub async fn drain(&self, config: &QueueConfig) -> DrainResult {
-        let mut inner = self.inner.lock().await;
-
         match config.mode {
             QueueMode::Batch => {
-                if inner.pending.is_empty() {
-                    inner.busy = false;
-                    DrainResult::Idle
-                } else {
-                    let messages: Vec<_> = inner.pending.drain(..).collect();
-                    DrainResult::Batched(messages)
-                }
+                let pending = {
+                    let mut inner = self.inner.lock().await;
+                    if inner.pending.is_empty() {
+                        inner.busy = false;
+                        return DrainResult::Idle;
+                    }
+                    std::mem::take(&mut inner.pending)
+                };
+                DrainResult::Batched(pending.into_iter().collect())
             }
             QueueMode::Sequential => {
-                if let Some(msg) = inner.pending.pop_front() {
-                    DrainResult::Sequential(Box::new(msg))
-                } else {
-                    inner.busy = false;
-                    DrainResult::Idle
+                let mut inner = self.inner.lock().await;
+                match inner.pending.pop_front() {
+                    Some(msg) => DrainResult::Sequential(Box::new(msg)),
+                    None => {
+                        inner.busy = false;
+                        DrainResult::Idle
+                    }
                 }
             }
             QueueMode::Drop => {
-                inner.pending.clear();
-                inner.busy = false;
+                let _pending = {
+                    let mut inner = self.inner.lock().await;
+                    let pending = std::mem::take(&mut inner.pending);
+                    inner.busy = false;
+                    pending
+                };
                 DrainResult::Idle
             }
         }
@@ -194,9 +203,10 @@ impl SessionMessageQueue {
             .entry(sender_id)
             .or_default()
             .push(msg);
+        inner.debounce_buffered = inner.debounce_buffered.saturating_add(1);
 
         // Check if we'd exceed max_pending when flushed
-        let total_buffered: usize = inner.debounce_buffers.values().map(|v| v.len()).sum();
+        let total_buffered = inner.debounce_buffered;
         if inner.pending.len() + total_buffered > config.max_pending + config.max_pending {
             // We're way over capacity — still debounce but warn via the result
             // The actual overflow check happens at flush time
@@ -216,9 +226,12 @@ impl SessionMessageQueue {
         sender_id: &str,
         config: &QueueConfig,
     ) -> Option<EnqueueResult> {
-        let mut inner = self.inner.lock().await;
-
-        let messages = inner.debounce_buffers.remove(sender_id)?;
+        let messages = {
+            let mut inner = self.inner.lock().await;
+            let messages = inner.debounce_buffers.remove(sender_id)?;
+            inner.debounce_buffered = inner.debounce_buffered.saturating_sub(messages.len());
+            messages
+        };
         if messages.is_empty() {
             return None;
         }
@@ -226,27 +239,25 @@ impl SessionMessageQueue {
         let combined = combine_messages(messages);
 
         // Always enqueue — never return ProcessNow from flush.
-        // If session is idle, enqueue and send wake notification.
-        let was_idle = !inner.busy;
-
-        // Apply overflow strategy
-        let result = if inner.pending.len() >= config.max_pending {
-            match config.overflow {
-                OverflowStrategy::DropOld => {
-                    inner.pending.pop_front();
-                    inner.pending.push_back(combined);
-                    EnqueueResult::Queued
+        let (result, was_idle) = {
+            let mut inner = self.inner.lock().await;
+            let was_idle = !inner.busy;
+            let result = if inner.pending.len() >= config.max_pending {
+                match config.overflow {
+                    OverflowStrategy::DropOld => {
+                        inner.pending.pop_front();
+                        inner.pending.push_back(combined);
+                        EnqueueResult::Queued
+                    }
+                    OverflowStrategy::DropNew => EnqueueResult::DroppedNew,
+                    OverflowStrategy::Reject => EnqueueResult::Rejected,
                 }
-                OverflowStrategy::DropNew => EnqueueResult::DroppedNew,
-                OverflowStrategy::Reject => EnqueueResult::Rejected,
-            }
-        } else {
-            inner.pending.push_back(combined);
-            EnqueueResult::Queued
+            } else {
+                inner.pending.push_back(combined);
+                EnqueueResult::Queued
+            };
+            (result, was_idle)
         };
-
-        // Drop the lock before notifying
-        drop(inner);
 
         if was_idle && result == EnqueueResult::Queued {
             self.wake.notify_one();
@@ -298,10 +309,14 @@ impl SessionMessageQueue {
     pub async fn clear_steered(&self) {
         let mut inner = self.inner.lock().await;
         inner.pending.retain(|msg| !msg.steered);
+        let mut removed = 0usize;
         inner.debounce_buffers.retain(|_, buffer| {
+            let before = buffer.len();
             buffer.retain(|msg| !msg.steered);
+            removed = removed.saturating_add(before - buffer.len());
             !buffer.is_empty()
         });
+        inner.debounce_buffered = inner.debounce_buffered.saturating_sub(removed);
     }
 
     /// Clear all pending messages and mark the session as idle.
