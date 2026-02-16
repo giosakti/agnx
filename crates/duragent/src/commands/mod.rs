@@ -6,6 +6,7 @@ use anyhow::{Result, bail};
 
 use duragent::config::DEFAULT_WORKSPACE;
 
+pub mod agent;
 pub mod attach;
 pub mod chat;
 pub mod doctor;

@@ -22,6 +22,12 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Manage agents
+    Agent {
+        #[command(subcommand)]
+        action: AgentAction,
+    },
+
     /// Attach to an existing session
     Attach {
         /// Session ID to attach to (omit to list attachable sessions)
@@ -167,6 +173,33 @@ enum Commands {
     },
 }
 
+// Sub-enums for nested subcommands (kept adjacent to Commands)
+
+#[derive(Subcommand, Debug)]
+enum AgentAction {
+    /// Create a new agent in the current workspace
+    Create {
+        /// Name for the new agent
+        name: String,
+
+        /// LLM provider [anthropic, openrouter, openai, ollama]
+        #[arg(long)]
+        provider: Option<String>,
+
+        /// Model name
+        #[arg(long)]
+        model: Option<String>,
+
+        /// Path to configuration file
+        #[arg(short, long, default_value = "duragent.yaml")]
+        config: String,
+
+        /// Skip interactive prompts; use defaults for missing flags
+        #[arg(long)]
+        no_interactive: bool,
+    },
+}
+
 #[derive(Subcommand, Debug)]
 enum ServeAction {
     /// Stop a running server
@@ -196,6 +229,15 @@ async fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Agent { action } => match action {
+            AgentAction::Create {
+                name,
+                provider,
+                model,
+                config,
+                no_interactive,
+            } => commands::agent::create(&config, &name, provider, model, no_interactive).await,
+        },
         Commands::Attach {
             session_id,
             list,
