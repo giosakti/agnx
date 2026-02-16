@@ -2,6 +2,7 @@ use std::io::SeekFrom;
 use std::path::Path;
 
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, BufReader};
+use tracing::warn;
 
 use crate::process::{ProcessError, ProcessMeta, ProcessRegistryHandle};
 
@@ -203,6 +204,11 @@ impl ProcessRegistryHandle {
         // Return stdin handle to the entry
         if let Some(mut entry) = self.entries.get_mut(handle_id) {
             entry.stdin = Some(stdin_handle);
+        } else {
+            warn!(
+                handle = %handle_id,
+                "Process entry removed before stdin handle was returned"
+            );
         }
 
         result

@@ -167,6 +167,8 @@ impl ProcessRegistryHandle {
         }
 
         for handle_id in to_remove {
+            let stdin_lock = self.stdin_locks.get(&handle_id);
+            let _guard = stdin_lock.lock().await;
             if let Some((_, entry)) = self.entries.remove(&handle_id) {
                 // Remove log file
                 let _ = tokio::fs::remove_file(&entry.meta.log_path).await;
