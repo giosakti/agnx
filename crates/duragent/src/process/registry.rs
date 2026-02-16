@@ -33,6 +33,8 @@ const WAIT_LOG_TAIL_BYTES: usize = 8 * 1024;
 
 /// Default cleanup age for completed processes (30 minutes).
 const DEFAULT_CLEANUP_AGE_SECS: u64 = 30 * 60;
+/// Default timeout for stdin writes to child processes (seconds).
+const STDIN_WRITE_TIMEOUT_SECS: u64 = 10;
 
 // ============================================================================
 // Public types
@@ -485,15 +487,21 @@ impl ProcessRegistryHandle {
         };
 
         use tokio::io::AsyncWriteExt;
-        let result = async {
-            stdin_handle
-                .write_all(input.as_bytes())
-                .await
-                .map_err(ProcessError::Io)?;
-            stdin_handle.flush().await.map_err(ProcessError::Io)?;
-            Ok::<(), ProcessError>(())
-        }
-        .await;
+        let write_result =
+            tokio::time::timeout(Duration::from_secs(STDIN_WRITE_TIMEOUT_SECS), async {
+                stdin_handle
+                    .write_all(input.as_bytes())
+                    .await
+                    .map_err(ProcessError::Io)?;
+                stdin_handle.flush().await.map_err(ProcessError::Io)?;
+                Ok::<(), ProcessError>(())
+            })
+            .await;
+
+        let result = match write_result {
+            Ok(res) => res,
+            Err(_) => Err(ProcessError::StdinTimeout),
+        };
 
         // Return stdin handle to the entry
         if let Some(mut entry) = self.entries.get_mut(handle_id) {

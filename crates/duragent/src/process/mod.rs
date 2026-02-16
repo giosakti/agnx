@@ -92,6 +92,9 @@ pub enum ProcessError {
     #[error("process does not have stdin")]
     NoStdin,
 
+    #[error("stdin write timed out")]
+    StdinTimeout,
+
     #[error("spawn failed: {0}")]
     SpawnFailed(String),
 
