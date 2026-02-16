@@ -11,7 +11,7 @@ use std::time::Duration;
 use chrono::Utc;
 use dashmap::DashMap;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, BufReader};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Semaphore, mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
 use crate::api::SessionStatus;
@@ -35,6 +35,8 @@ const WAIT_LOG_TAIL_BYTES: usize = 8 * 1024;
 const DEFAULT_CLEANUP_AGE_SECS: u64 = 30 * 60;
 /// Default timeout for stdin writes to child processes (seconds).
 const STDIN_WRITE_TIMEOUT_SECS: u64 = 10;
+/// Maximum concurrent recovery callbacks for lost processes.
+const RECOVERY_CALLBACK_CONCURRENCY: usize = 4;
 
 // ============================================================================
 // Public types
@@ -569,6 +571,7 @@ impl ProcessRegistryHandle {
 
         let mut recovered = 0u32;
         let mut lost = 0u32;
+        let mut lost_handles = Vec::new();
 
         while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
@@ -625,9 +628,7 @@ impl ProcessRegistryHandle {
                                 };
                                 self.entries.insert(meta.handle.clone(), entry);
                                 lost += 1;
-
-                                // Fire completion callback for lost processes
-                                self.fire_completion_callback(&meta.handle).await;
+                                lost_handles.push(meta.handle.clone());
                             } else {
                                 // Already terminal — just load into registry for queries
                                 let entry = ProcessEntry {
@@ -647,6 +648,18 @@ impl ProcessRegistryHandle {
                         warn!(path = %path.display(), error = %e, "Failed to read meta.json");
                     }
                 }
+            }
+        }
+
+        if !lost_handles.is_empty() {
+            let semaphore = Arc::new(Semaphore::new(RECOVERY_CALLBACK_CONCURRENCY));
+            for handle_id in lost_handles {
+                let semaphore = semaphore.clone();
+                let registry = self.clone();
+                tokio::spawn(async move {
+                    let _permit = semaphore.acquire().await;
+                    registry.fire_completion_callback(&handle_id).await;
+                });
             }
         }
 
