@@ -1,7 +1,8 @@
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::mpsc;
+use tokio_stream::StreamExt;
+use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, error, warn};
 
 use crate::process::{CallbackKey, CallbackKind, CallbackTask, ProcessRegistryHandle};
@@ -17,32 +18,48 @@ pub(crate) fn spawn_callback_workers(
     receiver: mpsc::Receiver<CallbackTask>,
     worker_count: usize,
 ) {
-    let receiver = Arc::new(Mutex::new(receiver));
-    for _ in 0..worker_count {
-        let registry = registry.clone();
-        let receiver = Arc::clone(&receiver);
-        tokio::spawn(async move {
-            loop {
-                let task = {
-                    let mut rx = receiver.lock().await;
-                    rx.recv().await
-                };
+    if worker_count == 0 {
+        warn!("Callback worker count is zero; callbacks will not be processed");
+        return;
+    }
 
-                let Some(task) = task else {
-                    break;
-                };
-
-                match task {
-                    CallbackTask::Completion { handle_id } => {
-                        registry.run_completion_callback(&handle_id).await;
-                    }
-                    CallbackTask::ScreenHalted { handle_id } => {
-                        registry.run_screen_halted_callback(&handle_id).await;
+    tokio::spawn(async move {
+        ReceiverStream::new(receiver)
+            .for_each_concurrent(Some(worker_count), |task| {
+                let registry = registry.clone();
+                async move {
+                    match task {
+                        CallbackTask::Completion { handle_id } => {
+                            let handle_for_log = handle_id.clone();
+                            let join = tokio::spawn(async move {
+                                registry.run_completion_callback(&handle_id).await;
+                            });
+                            if let Err(err) = join.await {
+                                error!(
+                                    handle = %handle_for_log,
+                                    error = %err,
+                                    "Callback task panicked"
+                                );
+                            }
+                        }
+                        CallbackTask::ScreenHalted { handle_id } => {
+                            let handle_for_log = handle_id.clone();
+                            let join = tokio::spawn(async move {
+                                registry.run_screen_halted_callback(&handle_id).await;
+                            });
+                            if let Err(err) = join.await {
+                                error!(
+                                    handle = %handle_for_log,
+                                    error = %err,
+                                    "Callback task panicked"
+                                );
+                            }
+                        }
                     }
                 }
-            }
-        });
-    }
+            })
+            .await;
+    });
 }
 
 impl ProcessRegistryHandle {
