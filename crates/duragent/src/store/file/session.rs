@@ -28,8 +28,18 @@ use crate::sync::KeyedLocks;
 /// having its own `events.jsonl` (append-only event log) and `state.json`
 /// (atomic snapshot).
 ///
-/// A per-session `KeyedLock` serializes `append_events` and `compact_events`
-/// to prevent data loss from concurrent read-modify-write during compaction.
+/// # Concurrency
+///
+/// A per-session [`KeyedLocks`] mutex serializes `append_events` and
+/// `compact_events` to prevent data loss from concurrent read-modify-write
+/// during compaction. Work is split across async and blocking boundaries:
+///
+/// - **Before lock:** serialization, directory creation (idempotent)
+/// - **Inside lock:** a single `spawn_blocking` call runs all file I/O
+///   (`std::fs`) so the async mutex never spans multiple await points
+///
+/// `load_events`, `load_snapshot`, and `save_snapshot` are lock-free —
+/// they operate on immutable or atomically-written files.
 #[derive(Clone)]
 pub struct FileSessionStore {
     sessions_dir: PathBuf,

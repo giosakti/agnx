@@ -47,11 +47,11 @@ Each session is stored as files:
 ```
 .duragent/sessions/{session_id}/
 ├── events.jsonl     # Append-only event log
-└── state.yaml       # Snapshot for fast resume
+└── state.json       # Snapshot for fast resume
 ```
 
 - **events.jsonl** — Every message, tool call, and status change is appended here
-- **state.yaml** — Periodic snapshot for fast resume (no need to replay all events)
+- **state.json** — Periodic snapshot for fast resume (no need to replay all events)
 
 ## Session Lifecycle
 

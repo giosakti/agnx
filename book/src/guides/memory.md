@@ -111,7 +111,7 @@ Directives are `*.md` files that are injected into the system prompt. They're lo
 - `{workspace}/directives/` — workspace-level, shared across all agents
 - `{agent_dir}/directives/` — agent-level, per-agent
 
-When any agent has memory configured, a default `memory.md` directive is auto-created at `{workspace}/directives/memory.md` with instructions for using memory tools.
+When memory is enabled, a built-in `memory` directive with instructions for using memory tools is **auto-generated at runtime** — no file on disk is needed. To customize the memory directive, place a `memory.md` file in either directives directory; file-based directives override runtime defaults when the source name (filename without `.md`) matches.
 
 ## Growth Management
 

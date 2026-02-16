@@ -21,7 +21,7 @@ duragent serve
         ├── sessions/
         │   └── session_abc/
         │       ├── events.jsonl
-        │       └── state.yaml
+        │       └── state.json
         ├── schedules/
         └── memory/world/
 ```

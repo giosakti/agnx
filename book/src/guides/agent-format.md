@@ -158,6 +158,22 @@ spec:
 | `system_prompt` | Markdown file | "What the agent DOES" — core system prompt |
 | `instructions` | Markdown file | Additional runtime instructions |
 
+Prompt files support **template variable interpolation** — `{{var}}` placeholders are replaced with runtime values when the agent loads. Unknown variables are left as-is.
+
+| Variable | Description | Example Output |
+|----------|-------------|----------------|
+| `{{date}}` | Current date (ISO 8601) | `2026-02-16` |
+| `{{time}}` | Current time (UTC) | `14:30 UTC` |
+| `{{agent.name}}` | Agent metadata name | `my-assistant` |
+| `{{agent.home}}` | Agent directory path | `/opt/agents/.duragent/agents/my-assistant` |
+
+**SYSTEM_PROMPT.md example with template variables:**
+```markdown
+You are {{agent.name}}. Today is {{date}}.
+
+Your working directory is {{agent.home}}.
+```
+
 **SOUL.md example:**
 ```markdown
 Communication style rules:
