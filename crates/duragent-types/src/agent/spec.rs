@@ -91,7 +91,7 @@ pub struct ModelConfig {
 }
 
 /// Session behavior configuration for an agent.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AgentSessionConfig {
     /// Behavior when client disconnects from a session.
     #[serde(default)]
@@ -122,7 +122,7 @@ fn default_llm_timeout_seconds() -> u64 {
 }
 
 /// Behavior when client disconnects from a session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OnDisconnect {
     /// Pause the session and wait for reconnect (default).
@@ -133,7 +133,7 @@ pub enum OnDisconnect {
 }
 
 /// Context window management configuration.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextConfig {
     /// Maximum tokens for conversation history at render time.
     /// 0 means no cap (use full available budget).
@@ -182,7 +182,7 @@ fn default_tool_result_keep_last() -> u32 {
 }
 
 /// Truncation strategy for tool results.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolResultTruncation {
     /// Keep the beginning of the output (default).
@@ -225,7 +225,7 @@ pub enum ToolConfig {
 }
 
 /// Configurable hooks for tool lifecycle events.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HooksConfig {
     #[serde(default)]
     pub before_tool: Vec<BeforeToolHook>,
@@ -234,7 +234,7 @@ pub struct HooksConfig {
 }
 
 /// A guard that runs before a tool executes.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BeforeToolHook {
     /// Tool pattern to match (e.g. "background_process:send_keys", "bash", "web:*").
     #[serde(rename = "match")]
@@ -254,7 +254,7 @@ pub struct BeforeToolHook {
 }
 
 /// The type of before-tool guard.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BeforeToolType {
     DependsOn,
@@ -262,7 +262,7 @@ pub enum BeforeToolType {
 }
 
 /// A steering message injected after a tool executes.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AfterToolHook {
     /// Tool pattern to match (e.g. "background_process:capture").
     #[serde(rename = "match")]
@@ -277,7 +277,7 @@ pub struct AfterToolHook {
 /// Loaded file contents for optional agent files.
 ///
 /// Used by `AgentSpec::from_yaml()` to construct an agent from pre-loaded content.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct LoadedAgentFiles {
     pub soul: Option<String>,
     pub system_prompt: Option<String>,
@@ -287,7 +287,7 @@ pub struct LoadedAgentFiles {
 /// File references parsed from agent.yaml.
 ///
 /// Used by storage implementations to know which files to load.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AgentFileRefs {
     pub name: String,
     pub soul: Option<String>,

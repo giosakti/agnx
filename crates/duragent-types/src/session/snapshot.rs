@@ -13,7 +13,7 @@ use crate::llm::Message;
 use super::events::PendingApproval;
 
 /// How old events are handled after a snapshot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CompactionMode {
     /// Remove old events (default — keeps things simple).
@@ -80,6 +80,7 @@ pub struct SessionConfig {
 }
 
 /// Checkpoint data for a snapshot: event sequences and conversation state.
+#[derive(Debug, Clone)]
 pub struct CheckpointState {
     /// The sequence number of the last event included in this snapshot.
     pub last_event_seq: u64,

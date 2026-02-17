@@ -39,7 +39,7 @@ pub const POLICY_KIND: &str = "Policy";
 // ============================================================================
 
 /// Tool execution policy.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolPolicy {
     /// API version for the policy format.
@@ -91,7 +91,7 @@ impl Default for ToolPolicy {
 }
 
 /// Policy mode for command filtering.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PolicyMode {
     /// Trust everything — only deny list blocks (default for backwards compatibility).
@@ -104,7 +104,7 @@ pub enum PolicyMode {
 }
 
 /// Notification configuration for command execution.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NotifyConfig {
     /// Whether notifications are enabled.
     #[serde(default)]
@@ -121,7 +121,7 @@ pub struct NotifyConfig {
 }
 
 /// A single notification delivery target.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Delivery {
     /// Log to tracing.

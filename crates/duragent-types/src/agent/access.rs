@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 // ============================================================================
 
 /// Access control configuration for an agent.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AccessConfig {
     #[serde(default)]
     pub dm: DmAccessConfig,
@@ -23,7 +23,7 @@ pub struct AccessConfig {
 }
 
 /// DM access policy configuration.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DmAccessConfig {
     #[serde(default)]
     pub policy: DmPolicy,
@@ -41,7 +41,7 @@ impl Default for DmAccessConfig {
 }
 
 /// DM access policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DmPolicy {
     /// Accept DMs from anyone (default).
@@ -54,7 +54,7 @@ pub enum DmPolicy {
 }
 
 /// Group access policy configuration.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroupAccessConfig {
     #[serde(default)]
     pub policy: GroupPolicy,
@@ -90,7 +90,7 @@ impl Default for GroupAccessConfig {
 }
 
 /// Group access policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GroupPolicy {
     /// Accept messages from any group (default).
@@ -103,7 +103,7 @@ pub enum GroupPolicy {
 }
 
 /// Disposition for a sender within an allowed group.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SenderDisposition {
     /// Message is visible to the LLM and triggers a response.
@@ -118,7 +118,7 @@ pub enum SenderDisposition {
 }
 
 /// Activation mode for group messages.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivationMode {
     /// Only respond when @mentioned or replied to (default).
@@ -133,7 +133,7 @@ pub enum ActivationMode {
 // ============================================================================
 
 /// Configuration for the context buffer (messages from non-triggering senders).
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextBufferConfig {
     /// How non-triggering messages are stored.
     #[serde(default)]
@@ -165,7 +165,7 @@ fn default_max_age_hours() -> u64 {
 }
 
 /// How non-triggering messages from `Allow` senders are stored in mention mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextBufferMode {
     /// Ephemeral buffer: stored as SilentMessage, injected as a system block on trigger.
@@ -180,7 +180,7 @@ pub enum ContextBufferMode {
 // ============================================================================
 
 /// Queue configuration for group message handling.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueueConfig {
     /// How pending messages are processed when the session becomes idle.
     #[serde(default)]
@@ -216,7 +216,7 @@ fn default_max_pending() -> usize {
 }
 
 /// Queue mode for group message handling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum QueueMode {
     /// Batch all pending messages into one combined message (default).
@@ -229,7 +229,7 @@ pub enum QueueMode {
 }
 
 /// Overflow strategy when the queue is full.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OverflowStrategy {
     /// Drop oldest pending messages to make room (default).
@@ -242,7 +242,7 @@ pub enum OverflowStrategy {
 }
 
 /// Debounce configuration for batching rapid messages from the same sender.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebounceConfig {
     /// Whether debouncing is enabled.
     #[serde(default = "default_true")]

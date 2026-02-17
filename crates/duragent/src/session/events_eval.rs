@@ -61,9 +61,9 @@ impl PendingApprovalEval for PendingApproval {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::OnDisconnect;
     use crate::llm::Role;
     use crate::session::{SessionEvent, SessionEventPayload, ToolResultData};
-    use duragent_types::agent::OnDisconnect;
 
     #[test]
     fn event_to_message() {
