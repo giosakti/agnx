@@ -794,7 +794,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "duragent"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -841,7 +841,7 @@ dependencies = [
 
 [[package]]
 name = "duragent-cli"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "duragent-client",
@@ -852,7 +852,7 @@ dependencies = [
 
 [[package]]
 name = "duragent-client"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "bytes",
  "duragent-types",
@@ -867,7 +867,7 @@ dependencies = [
 
 [[package]]
 name = "duragent-gateway-discord"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -882,7 +882,7 @@ dependencies = [
 
 [[package]]
 name = "duragent-gateway-protocol"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "chrono",
  "serde",
@@ -891,7 +891,7 @@ dependencies = [
 
 [[package]]
 name = "duragent-gateway-telegram"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "duragent-gateway-protocol",
@@ -905,7 +905,7 @@ dependencies = [
 
 [[package]]
 name = "duragent-types"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "chrono",
  "serde",

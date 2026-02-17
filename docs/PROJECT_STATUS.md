@@ -3,7 +3,7 @@
 > **Purpose:** Living status document. The stable vision and principles live in the [Project Charter](./internal/specs/202601111100.project-charter.md).
 
 ## Last Updated
-2026-02-16
+2026-02-17
 
 ## Strategic Direction
 
@@ -115,6 +115,14 @@ Key specs and design docs:
 - [x] Safer defaults (127.0.0.1 bind, memory/bash/web enabled, `{{date}}` syntax)
 - [x] Better error messages (`duragent chat` lists available agents on failure)
 - [x] Credential hints after `duragent init`
+
+### v0.5.3 — CLI & DX Improvements ✓
+- [x] Extracted `duragent-types`, `duragent-client`, `duragent-cli` crates
+- [x] New commands: `agent list`, `session list`, `session delete`, `serve status`, `completions`
+- [x] Global `-v`/`-q` flags, improved `--version` output, better error formatting
+- [x] CI: `--features server` for tests/lint, `cargo-audit`, MSRV enforcement (1.91)
+- [x] `make watch` target, Ollama credential hint
+- [x] Documentation updates (CLI reference, CONTRIBUTING.md, installation guide)
 
 ### v0.6.0 — Observability & Sandbox
 - [ ] Structured logging improvements

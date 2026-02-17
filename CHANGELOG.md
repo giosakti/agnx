@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-02-17
+
+### Added
+- `duragent agent list` command — list all available agents on a running server
+- `duragent session list` command — list all sessions on a running server
+- `duragent session delete` command — delete a session by ID
+- `duragent serve status` command — check if a server is running and show its status
+- `duragent completions` command — generate shell completions (bash, zsh, fish, elvish, powershell)
+- Global `-v`/`--verbose` and `-q`/`--quiet` flags for log level control
+- `--version` now shows variant, commit hash, and build date
+- `cargo-audit` job in CI pipeline
+- MSRV enforcement (`rust-version = "1.91"`) in workspace and CI
+- `make watch` target (requires `cargo-watch`)
+- Ollama credential hint in `duragent init`
+
+### Changed
+- Extracted `duragent-types`, `duragent-client`, and `duragent-cli` crates from `duragent`
+- CLI commands (`chat`, `attach`) gated behind `cli` feature flag
+- CI and Makefile test/lint targets now use `--features server`
+- Top-level error output uses `eprintln!("error: {e:#}")` for better error chain display
+- CLI reference documentation restructured by command group (Setup, Server, Agents, Sessions, Maintenance, Utilities)
+
 ## [0.5.2] - 2026-02-16
 
 ### Added
@@ -234,7 +256,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Project documentation (architecture, API reference, deployment guide)
 - Duragent Format specification
 
-[Unreleased]: https://github.com/giosakti/duragent/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/giosakti/duragent/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/giosakti/duragent/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/giosakti/duragent/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/giosakti/duragent/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/giosakti/duragent/compare/v0.4.1...v0.5.0
