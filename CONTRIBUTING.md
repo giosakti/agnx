@@ -44,6 +44,7 @@ duragent/
 │   ├── duragent/                     # Core runtime (binary + library)
 │   │   └── src/
 │   │       ├── main.rs               # CLI entrypoint (clap)
+│   │       ├── commands/             # CLI subcommands (init, chat, doctor, upgrade, agent)
 │   │       ├── config.rs             # Configuration loading (duragent.yaml)
 │   │       ├── session/              # Session actor, persistence, lifecycle
 │   │       ├── gateway/              # Gateway manager, handler, subprocess
@@ -51,6 +52,7 @@ duragent/
 │   │       ├── llm/                  # LLM provider clients
 │   │       ├── tools/                # Tool execution, policy, scheduling
 │   │       ├── memory/               # Memory system (recall, remember, reflect)
+│   │       ├── process/              # Background process management
 │   │       ├── context/              # Context building, directives, truncation
 │   │       ├── scheduler/            # Scheduled task service
 │   │       └── agent/                # Agent spec loading, policy

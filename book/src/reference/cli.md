@@ -22,6 +22,27 @@ duragent init
 duragent init --agent-name my-bot --provider anthropic
 ```
 
+### `duragent agent create`
+
+Create a new agent in an existing workspace. Like `duragent init` but adds a single agent without touching the rest of the workspace.
+
+```bash
+duragent agent create <name> [flags]
+
+Flags:
+      --provider string     LLM provider (anthropic, openrouter, openai, ollama)
+      --model string        Model name
+  -c, --config string       Path to config file (default duragent.yaml)
+      --no-interactive      Skip interactive prompts; use defaults
+```
+
+**Examples:**
+```bash
+duragent agent create research-bot
+duragent agent create my-bot --provider anthropic --model claude-sonnet-4-20250514
+duragent agent create quick-bot --no-interactive
+```
+
 ### `duragent login`
 
 Authenticate with an LLM provider via OAuth. Currently only `anthropic` is supported.
@@ -104,6 +125,8 @@ Within `duragent chat`, these commands are available:
 | Command | Description |
 |---------|-------------|
 | `/quit` or `/exit` | End session |
+| `/reset` | End current session; next message starts fresh |
+| `/status` | Show current session info |
 | `Ctrl+D` | Detach from session (EOF) |
 
 ### `duragent attach`
@@ -158,6 +181,8 @@ duragent upgrade [flags]
 Flags:
       --check             Only check for updates, don't install
       --version string    Target version (e.g., "0.6.0" or "v0.6.0")
+      --full              Download full variant (includes gateway binaries)
+      --core              Download core variant only (no gateway binaries)
       --restart           Restart a running server after upgrade
   -c, --config string     Path to config file (default duragent.yaml, used with --restart)
   -p, --port int          Port override (used with --restart)

@@ -62,7 +62,7 @@ These are separate code paths — they do not conflict.
 
 # Server
 server:
-  host: 0.0.0.0
+  host: 127.0.0.1
   port: 8080
   request_timeout_seconds: 300
   idle_timeout_seconds: 60
