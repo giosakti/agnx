@@ -1,4 +1,4 @@
-.PHONY: build test test-nocapture lint coverage clean run help
+.PHONY: build test test-nocapture lint coverage clean run watch help
 
 # Build variables
 BINARY_NAME := duragent
@@ -20,15 +20,15 @@ build:
 
 ## test: Run tests
 test:
-	cargo test
+	cargo test --features server
 
 ## test-nocapture: Run tests with output (don't capture stdout/stderr)
 test-nocapture:
-	cargo test -- --nocapture
+	cargo test --features server -- --nocapture
 
 ## lint: Run linter
 lint:
-	cargo clippy -- -D warnings
+	cargo clippy --features server -- -D warnings
 
 ## coverage: Run tests with coverage report
 coverage:
@@ -47,6 +47,10 @@ run:
 ## fmt: Format code
 fmt:
 	cargo fmt
+
+## watch: Run tests on file change (requires cargo-watch)
+watch:
+	cargo watch -x 'test --features server'
 
 ## check: Run all checks (lint + test)
 check: lint test

@@ -24,7 +24,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --features server -- -D warnings
 
   test:
     name: Test
@@ -35,7 +35,30 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Run tests
-        run: cargo test
+        run: cargo test --features server
+
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@1.91.0
+
+      - name: Check MSRV
+        run: cargo check --workspace
+
+  audit:
+    name: Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run audit
+        run: cargo audit
 
   build:
     name: Build
