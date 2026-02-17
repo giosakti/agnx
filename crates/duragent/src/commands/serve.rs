@@ -326,6 +326,27 @@ pub async fn run(
     Ok(())
 }
 
+/// Check server status.
+pub async fn status(config_path: &str, port_override: Option<u16>) -> Result<()> {
+    let config = Config::load(config_path).await?;
+    let port = port_override.unwrap_or(config.server.port);
+
+    let client = AgentClient::new(&format!("http://127.0.0.1:{}", port));
+
+    match client.health().await {
+        Ok(readyz) => {
+            println!("Server running on port {}", port);
+            println!("  Status: {}", readyz.status);
+            println!("  Version: {}", duragent::build_info::version_string());
+        }
+        Err(_) => {
+            println!("No server running on port {}", port);
+        }
+    }
+
+    Ok(())
+}
+
 /// Stop a running server by calling the shutdown endpoint.
 pub async fn stop(config_path: &str, port_override: Option<u16>) -> Result<()> {
     let config = Config::load(config_path).await?;

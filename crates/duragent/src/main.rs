@@ -129,6 +129,12 @@ enum Commands {
         provider: String,
     },
 
+    /// Manage sessions
+    Session {
+        #[command(subcommand)]
+        action: SessionAction,
+    },
+
     /// Upgrade duragent to the latest version
     Upgrade {
         /// Only check for updates, don't install
@@ -216,10 +222,63 @@ enum AgentAction {
         #[arg(long)]
         no_interactive: bool,
     },
+
+    /// List all available agents
+    List {
+        /// Path to configuration file
+        #[arg(short, long, default_value = "duragent.yaml")]
+        config: String,
+
+        /// Agents directory (overrides config file)
+        #[arg(long)]
+        agents_dir: Option<PathBuf>,
+
+        /// Connect to a specific server URL instead of auto-starting
+        #[arg(short, long)]
+        server: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum SessionAction {
+    /// List all sessions
+    List {
+        /// Path to configuration file
+        #[arg(short, long, default_value = "duragent.yaml")]
+        config: String,
+
+        /// Agents directory (overrides config file)
+        #[arg(long)]
+        agents_dir: Option<PathBuf>,
+
+        /// Connect to a specific server URL instead of auto-starting
+        #[arg(short, long)]
+        server: Option<String>,
+    },
+
+    /// Delete a session
+    Delete {
+        /// Session ID to delete
+        session_id: String,
+
+        /// Path to configuration file
+        #[arg(short, long, default_value = "duragent.yaml")]
+        config: String,
+
+        /// Agents directory (overrides config file)
+        #[arg(long)]
+        agents_dir: Option<PathBuf>,
+
+        /// Connect to a specific server URL instead of auto-starting
+        #[arg(short, long)]
+        server: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
 enum ServeAction {
+    /// Show server status
+    Status,
     /// Stop a running server
     Stop,
     /// Reload agent configurations from disk
@@ -263,6 +322,11 @@ async fn run(cli: &Cli) -> Result<()> {
                 )
                 .await
             }
+            AgentAction::List {
+                config,
+                agents_dir,
+                server,
+            } => commands::agent::list(config, agents_dir.as_deref(), server.as_deref()).await,
         },
         Commands::Completions { shell } => {
             clap_complete::generate(
@@ -311,6 +375,27 @@ async fn run(cli: &Cli) -> Result<()> {
             .await
         }
         Commands::Login { provider } => commands::login::run(provider).await,
+        Commands::Session { action } => match action {
+            SessionAction::List {
+                config,
+                agents_dir,
+                server,
+            } => commands::session::list(config, agents_dir.as_deref(), server.as_deref()).await,
+            SessionAction::Delete {
+                session_id,
+                config,
+                agents_dir,
+                server,
+            } => {
+                commands::session::delete(
+                    session_id,
+                    config,
+                    agents_dir.as_deref(),
+                    server.as_deref(),
+                )
+                .await
+            }
+        },
         Commands::Upgrade {
             check,
             version,
@@ -341,6 +426,7 @@ async fn run(cli: &Cli) -> Result<()> {
             agents_dir,
             ephemeral,
         } => match action {
+            Some(ServeAction::Status) => commands::serve::status(config, *port).await,
             Some(ServeAction::Stop) => commands::serve::stop(config, *port).await,
             Some(ServeAction::ReloadAgents) => commands::serve::reload_agents(config, *port).await,
             None => {

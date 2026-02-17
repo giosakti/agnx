@@ -15,6 +15,7 @@ pub mod doctor;
 pub mod init;
 pub mod login;
 pub mod serve;
+pub mod session;
 pub mod upgrade;
 
 /// Check that a duragent workspace exists.

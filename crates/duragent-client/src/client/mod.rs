@@ -121,6 +121,18 @@ impl AgentClient {
         self.json_response(response).await
     }
 
+    /// Delete a session.
+    pub async fn delete_session(&self, session_id: &str) -> Result<()> {
+        let url = format!("{}/api/v1/sessions/{}", self.base_url, session_id);
+        let response = self.http.delete(&url).send().await?;
+
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(self.parse_error(response).await)
+        }
+    }
+
     /// Get messages for a session.
     pub async fn get_messages(
         &self,

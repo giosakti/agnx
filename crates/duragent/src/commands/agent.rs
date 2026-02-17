@@ -1,15 +1,51 @@
-//! `duragent agent create` command implementation.
+//! `duragent agent` command implementations.
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 
 use duragent::config::{self, Config, DEFAULT_AGENTS_DIR, DEFAULT_WORKSPACE};
+use duragent::launcher::{LaunchOptions, ensure_server_running};
 
 use super::init::{
     DEFAULT_MODEL, DEFAULT_PROVIDER, create_agent_files, credential_hint, print_file_summary,
     prompt_with_default,
 };
+
+pub async fn list(
+    config_path: &str,
+    agents_dir_override: Option<&Path>,
+    server_url: Option<&str>,
+) -> Result<()> {
+    super::check_workspace(config_path)?;
+    let config = Config::load(config_path).await?;
+
+    let client = ensure_server_running(LaunchOptions {
+        server_url,
+        config_path: Path::new(config_path),
+        config: &config,
+        agents_dir: agents_dir_override,
+    })
+    .await
+    .context("Failed to connect to server")?;
+
+    let agents = client.list_agents().await?;
+
+    if agents.is_empty() {
+        println!("No agents found.");
+        return Ok(());
+    }
+
+    println!("{:<20} DESCRIPTION", "NAME");
+    println!("{:-<20} {:-<40}", "", "");
+
+    for agent in &agents {
+        let desc = agent.description.as_deref().unwrap_or("");
+        println!("{:<20} {}", agent.name, desc);
+    }
+
+    Ok(())
+}
 
 pub async fn create(
     config_path: &str,
