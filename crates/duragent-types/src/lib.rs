@@ -5,7 +5,6 @@
 //! depend on it.
 
 pub mod agent;
-pub mod api;
 pub mod llm;
 pub mod provider;
 pub mod scheduler;

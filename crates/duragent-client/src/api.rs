@@ -7,8 +7,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-// SessionStatus is defined in duragent-types; re-exported here for compatibility.
-pub use duragent_types::api::SessionStatus;
+// SessionStatus is defined in duragent-types::session; re-exported here for API compatibility.
+pub use duragent_types::session::SessionStatus;
 
 // ============================================================================
 // ID Prefixes

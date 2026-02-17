@@ -7,8 +7,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::OnDisconnect;
-use crate::api::SessionStatus;
 use crate::llm::Message;
+
+use super::SessionStatus;
 
 use super::events::PendingApproval;
 

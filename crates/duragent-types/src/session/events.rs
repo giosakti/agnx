@@ -10,8 +10,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::{OnDisconnect, ToolType};
-use crate::api::SessionStatus;
 use crate::llm::{Message, Usage};
+
+use super::SessionStatus;
 
 /// A session event that can be persisted to the event log.
 #[derive(Debug, Clone, Serialize, Deserialize)]
