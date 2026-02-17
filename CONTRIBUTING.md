@@ -36,7 +36,7 @@ make coverage
 
 ## Architecture Overview
 
-Duragent is a Rust workspace with four crates:
+Duragent is a Rust workspace with seven crates:
 
 ```
 duragent/
@@ -44,7 +44,7 @@ duragent/
 │   ├── duragent/                     # Core runtime (binary + library)
 │   │   └── src/
 │   │       ├── main.rs               # CLI entrypoint (clap)
-│   │       ├── commands/             # CLI subcommands (init, chat, doctor, upgrade, agent)
+│   │       ├── commands/             # CLI subcommands (init, chat, doctor, upgrade, agent, session)
 │   │       ├── config.rs             # Configuration loading (duragent.yaml)
 │   │       ├── session/              # Session actor, persistence, lifecycle
 │   │       ├── gateway/              # Gateway manager, handler, subprocess
@@ -56,6 +56,9 @@ duragent/
 │   │       ├── context/              # Context building, directives, truncation
 │   │       ├── scheduler/            # Scheduled task service
 │   │       └── agent/                # Agent spec loading, policy
+│   ├── duragent-types/               # Shared domain types
+│   ├── duragent-client/              # API types, HTTP client, SSE parser, LLM data types
+│   ├── duragent-cli/                 # Interactive CLI REPL (reedline)
 │   ├── duragent-gateway-protocol/    # Shared protocol types (JSON Lines over stdio)
 │   ├── duragent-gateway-telegram/    # Telegram gateway plugin
 │   └── duragent-gateway-discord/     # Discord gateway plugin
@@ -73,9 +76,25 @@ duragent/
 | Crate | Purpose |
 |-------|---------|
 | `duragent` | Core runtime: HTTP server, session management, LLM calls, tools, memory, scheduling |
+| `duragent-types` | Shared domain types used across crates |
+| `duragent-client` | API types, HTTP client, SSE parser, LLM data types |
+| `duragent-cli` | Interactive CLI REPL using reedline |
 | `duragent-gateway-protocol` | Shared types for the Gateway Protocol (used by both core and plugins) |
 | `duragent-gateway-telegram` | Telegram bot gateway — compiles as library (built-in) or binary (subprocess) |
 | `duragent-gateway-discord` | Discord bot gateway — compiles as library (built-in) or binary (subprocess) |
+
+### Feature Flags
+
+The `duragent` crate uses feature flags to control what gets compiled:
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `server` | HTTP server, handlers, gateway protocol | Yes |
+| `cli` | Interactive REPL (reedline) | Yes |
+| `gateway-discord` | Built-in Discord gateway (implies `server`) | No |
+| `gateway-telegram` | Built-in Telegram gateway (implies `server`) | No |
+
+Note: `make test` runs with `--features server` to include integration tests.
 
 For deeper architectural details, see `docs/internal/` (internal design documents for maintainers).
 
