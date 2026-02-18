@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-02-18
+
+### Added
+- Composite `AssistantResponse` event — folds content + tool_calls into a single atomic record, eliminating merge heuristics during replay
+- `ToolsSkipped` event — when multiple tool calls are interrupted (by steering or approval), records all skipped tools in a single event instead of N individual `ToolResult` events
+- Crash recovery for incomplete tool iterations — registry synthesizes missing `ToolResult` events on server restart
+- Markdown-to-HTML formatting for Telegram gateway messages
+
+### Changed
+- Agentic loop now persists its own final response; callers use `force_flush()` instead of `add_assistant_message()`
+- New assistant responses use composite `AssistantResponse` event (backward-compatible with legacy `AssistantMessage` + `ToolCall` events in existing JSONL)
+
 ## [0.5.3] - 2026-02-17
 
 ### Added
@@ -256,7 +268,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Project documentation (architecture, API reference, deployment guide)
 - Duragent Format specification
 
-[Unreleased]: https://github.com/giosakti/duragent/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/giosakti/duragent/compare/v0.5.4...HEAD
+[0.5.4]: https://github.com/giosakti/duragent/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/giosakti/duragent/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/giosakti/duragent/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/giosakti/duragent/compare/v0.5.0...v0.5.1

@@ -3,7 +3,7 @@
 > **Purpose:** Living status document. The stable vision and principles live in the [Project Charter](./internal/specs/202601111100.project-charter.md).
 
 ## Last Updated
-2026-02-17
+2026-02-18
 
 ## Strategic Direction
 
@@ -123,6 +123,13 @@ Key specs and design docs:
 - [x] CI: `--features server` for tests/lint, `cargo-audit`, MSRV enforcement (1.91)
 - [x] `make watch` target, Ollama credential hint
 - [x] Documentation updates (CLI reference, CONTRIBUTING.md, installation guide)
+
+### v0.5.4 — Event Durability ✓
+- [x] Composite `AssistantResponse` event (atomic content + tool_calls)
+- [x] `ToolsSkipped` event (batch skip replaces N synthetic ToolResults)
+- [x] Crash recovery for incomplete tool iterations
+- [x] Agentic loop self-persistence (callers use `force_flush()`)
+- [x] Markdown-to-HTML formatting for Telegram gateway
 
 ### v0.6.0 — Observability & Sandbox
 - [ ] Structured logging improvements
